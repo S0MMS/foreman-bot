@@ -1,0 +1,42 @@
+{
+  "name": "foreman-bot",
+  "version": "1.0.0",
+  "description": "Control Claude Code sessions from Slack",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "foreman": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "slack-manifest.json",
+    "README.md"
+  ],
+  "keywords": [
+    "claude",
+    "slack",
+    "ai",
+    "claude-code",
+    "bot"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.70",
+    "@slack/bolt": "^4.1.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

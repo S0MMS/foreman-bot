@@ -1,0 +1,16 @@
+# Source (dist/ is published instead)
+src/
+tsconfig.json
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Dev
+node_modules/
+*.log
+
+# Sessions
+sessions.json
+~/.foreman/
