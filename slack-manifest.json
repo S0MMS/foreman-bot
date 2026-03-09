@@ -13,7 +13,7 @@
       {
         "command": "/cc",
         "description": "Control your Foreman session",
-        "usage_hint": "[cwd|model|name|plugin|stop|session|new] [args]",
+        "usage_hint": "[cwd|model|name|plugin|stop|session|new|reboot] [args]",
         "should_escape": false
       }
     ]

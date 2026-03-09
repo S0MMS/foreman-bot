@@ -66,6 +66,60 @@ When Claude wants to edit a file or run a shell command, Foreman posts an **Appr
 | `/cc stop` | Cancel the running query |
 | `/cc session` | Show current session info |
 | `/cc new` | Clear session and start fresh |
+| `/cc reboot` | Restart the Foreman process |
+
+## Running as a service
+
+On macOS, `foreman init` offers to install a launchd service that starts Foreman on login and keeps it running.
+
+If you prefer manual setup, create `~/Library/LaunchAgents/com.foreman.bot.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.foreman.bot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/node</string>
+    <string>/path/to/foreman/dist/index.js</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/path/to/foreman</string>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/you/.foreman/foreman.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/.foreman/foreman.err.log</string>
+</dict>
+</plist>
+```
+
+Then load it:
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.foreman.bot.plist
+```
+
+Check status:
+
+```sh
+launchctl print gui/$(id -u)/com.foreman.bot
+```
+
+Logs are at `~/.foreman/foreman.out.log` and `~/.foreman/foreman.err.log`.
 
 ## Configuration
 

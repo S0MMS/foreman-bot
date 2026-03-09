@@ -1,7 +1,7 @@
 import type { App } from "@slack/bolt";
 import type { ApprovalResult } from "./types.js";
 import { existsSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import {
   getState,
   setCwd,
@@ -32,7 +32,9 @@ export function registerHandlers(app: App, botUserId: string): void {
       return;
     }
 
-    const text = message.text.trim();
+    const raw = message.text.trim();
+    // Allow ! prefix as an escape hatch for Claude slash commands (e.g. !freud:pull main → /freud:pull main)
+    const text = raw.startsWith("!") ? "/" + raw.slice(1) : raw;
     const channel = message.channel;
     const ts = message.ts;
 
@@ -172,8 +174,13 @@ export function registerHandlers(app: App, botUserId: string): void {
           await respond("Usage: `/cc cwd /path/to/directory`");
           return;
         }
-        setCwd(channel, path);
-        await respond(`Working directory set to \`${path}\``);
+        const resolved = resolve(path);
+        if (!existsSync(resolved)) {
+          await respond(`:x: Directory not found: \`${resolved}\``);
+          return;
+        }
+        setCwd(channel, resolved);
+        await respond(`Working directory set to \`${resolved}\``);
         break;
       }
 
@@ -272,6 +279,17 @@ export function registerHandlers(app: App, botUserId: string): void {
         break;
       }
 
+      case "reboot": {
+        await respond(":recycle: Rebooting Foreman...");
+        // Give Slack time to deliver the response, then exit.
+        // launchd (or wrapper script) will restart the process.
+        setTimeout(() => {
+          console.log("Reboot requested via /cc reboot — exiting for restart");
+          process.exit(0);
+        }, 1500);
+        break;
+      }
+
       default:
         await respond(
           [
@@ -283,6 +301,7 @@ export function registerHandlers(app: App, botUserId: string): void {
             "• `/cc stop` — cancel active query",
             "• `/cc session` — show session info",
             "• `/cc new` — start fresh session (resets model, clears plugins)",
+            "• `/cc reboot` — restart Foreman",
           ].join("\n")
         );
     }

@@ -50,6 +50,7 @@ export async function startSession(
         model: state.model,
         cwd,
         abortController,
+
         settingSources: ["user", "project"],
         plugins: buildPluginsOption(channelId),
         systemPrompt: {
@@ -92,6 +93,7 @@ export async function resumeSession(
         resume: sessionId,
         cwd,
         abortController,
+
         settingSources: ["user", "project"],
         plugins: buildPluginsOption(channelId),
         systemPrompt: {

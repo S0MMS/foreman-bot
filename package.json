@@ -1,6 +1,6 @@
 {
   "name": "foreman-bot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Control Claude Code sessions from Slack",
   "type": "module",
   "main": "dist/index.js",

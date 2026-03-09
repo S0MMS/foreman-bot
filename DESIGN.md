@@ -4,7 +4,7 @@
 
 Control and interact with a Claude Code session from your phone via Slack. A Node.js bot running on your Mac connects to the Claude Agent SDK, relaying messages bidirectionally. This enables sending prompts, reading responses, approving/denying tool use, and managing sessions — all from the Slack app on your phone.
 
-**Primary workflow: Direct Message the bot.** Just open a DM with the bot (named "Foreman") and type — no @mentions, no channels, no threads. It's like texting Claude from your phone.
+**Primary workflow: Message the bot in any channel or DM.** Each channel gets its own independent session. The bot's persona name comes from the channel name — put it in `#clive` and it's Clive. DMs default to "Foreman".
 
 ## Architecture
 
@@ -56,7 +56,7 @@ Control and interact with a Claude Code session from your phone via Slack. A Nod
 - **Slack App** uses Socket Mode — no public URL needed, runs entirely on your Mac
 - **Free Slack workspace** for development (your own, full admin control)
 - **DMs are the primary interface** — simple back-and-forth conversation
-- **Channels also supported** — requires @mention, useful for shared/visible sessions
+- **Channels also supported** — no @mention needed, useful for shared/visible sessions
 - **Not connecting to an existing Claude instance** — each `query()` spawns a fresh Claude CLI process; session resume loads conversation history for context
 - **Costs** come from Anthropic's API (same as running Claude Code in terminal); local tool execution is free
 
@@ -81,6 +81,8 @@ foreman/
 │   ├── slack.ts              # Slack event handlers (messages, button interactions)
 │   ├── claude.ts             # Claude Agent SDK wrapper (query, resume, permissions)
 │   ├── session.ts            # Session state management (per-channel, persisted to disk)
+│   ├── config.ts             # Config file reading (~/.foreman/config.json)
+│   ├── init.ts               # Setup wizard (tokens, launchd service)
 │   ├── format.ts             # Markdown → Slack mrkdwn, message chunking
 │   └── types.ts              # Shared TypeScript types
 ├── DESIGN.md                 # This file
@@ -153,8 +155,9 @@ Fully working. Bot connects via Socket Mode. DM and channel messaging both work.
 
 **Channels:**
 - Invite the bot to a channel
-- Must @mention the bot (e.g., `@Foreman what files are here?`)
-- Messages without @mention are buffered as context
+- Just type — no @mention needed (same as DMs)
+- Each channel gets its own independent session
+- Bot persona name defaults to the channel name
 - Responses appear in threads
 - Useful for shared/visible sessions
 
@@ -171,14 +174,16 @@ Fully working. Bot connects via Socket Mode. DM and channel messaging both work.
 
 ### Session Management
 - Sessions persist across messages — Claude retains context from prior exchanges
-- Sessions are saved to disk (`~/.foreman/session.json`) and survive bot restarts
+- Sessions are saved to disk (`~/.foreman/sessions.json`, multi-channel format) and survive bot restarts
 - If a persisted session is stale, Foreman automatically falls back to a fresh session
 - `/cc new` — clears the session (resets model, clears plugins), next message starts fresh
 - `/cc cwd <path>` — sets the working directory
 - `/cc model <name>` — set the Claude model (see Model Selection below)
 - `/cc plugin <name-or-path>` — load a development plugin (see Plugins section)
+- `/cc name <name>` — override the bot's persona name for this channel
 - `/cc stop` — cancels the active query
 - `/cc session` — show session info (model, cwd, plugins, status)
+- `/cc reboot` — restart the Foreman process (launchd auto-restarts it)
 
 ### Model Selection
 
@@ -247,7 +252,22 @@ Claude needs tool approval
 - **Bot not responding to DMs**: Ensure `im:history` and `im:write` scopes are added, `message.im` event is subscribed, and "Allow users to send messages" is enabled under App Home.
 - **Stale sessions after restart**: Now auto-recovered — Foreman falls back to a fresh session if resume fails. Can also manually clear with `/cc new`.
 
+## Running as a Service
+
+Foreman runs as a macOS launchd service for always-on operation:
+
+- `foreman init` offers to create the plist and load the service
+- Plist at `~/Library/LaunchAgents/com.foreman.bot.plist`
+- `KeepAlive` + `RunAtLoad` ensure it starts on login and restarts on crash
+- `ThrottleInterval: 5` prevents rapid restart loops
+- `/cc reboot` exits the process; launchd auto-restarts it
+- Logs at `~/.foreman/foreman.{out,err}.log`
+- `launchctl print gui/$(id -u)/com.foreman.bot` to check status
+
+The plist's `EnvironmentVariables.PATH` includes `/opt/homebrew/bin` so the `claude` CLI is discoverable. `claude.ts` resolves the path dynamically via `which claude` at startup.
+
 ## Future Ideas
 
 - File upload/download via Slack
 - Cost tracking per session
+- Web UI for session management
