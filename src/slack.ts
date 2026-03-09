@@ -1,7 +1,8 @@
 import type { App } from "@slack/bolt";
 import type { ApprovalResult } from "./types.js";
 import { existsSync } from "fs";
-import { join, resolve } from "path";
+import { homedir } from "os";
+import { isAbsolute, join, resolve } from "path";
 import {
   getState,
   setCwd,
@@ -16,6 +17,29 @@ import { MODEL_ALIASES } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { markdownToSlack, chunkMessage, formatToolRequest } from "./format.js";
 
+
+/**
+ * Format a short progress message for an auto-approved tool call.
+ */
+function formatProgress(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case "Read":
+      return `_Reading \`${input.file_path}\`..._`;
+    case "Glob":
+      return `_Searching for \`${input.pattern}\`..._`;
+    case "Grep":
+      return `_Searching code for \`${input.pattern}\`..._`;
+    case "WebSearch":
+      return `_Searching the web: \`${input.query}\`..._`;
+    case "WebFetch":
+      return `_Fetching \`${input.url}\`..._`;
+    case "Task":
+    case "Explore":
+      return `_Spawning subagent..._`;
+    default:
+      return `_${toolName}..._`;
+  }
+}
 
 /**
  * Register all Slack event handlers on the Bolt app.
@@ -111,17 +135,24 @@ export function registerHandlers(app: App, botUserId: string): void {
         });
       };
 
+      const onProgress = (toolName: string, input: Record<string, unknown>) => {
+        app.client.chat.postMessage({
+          channel,
+          text: formatProgress(toolName, input),
+        }).catch(() => {/* ignore */});
+      };
+
       let result;
       if (state.sessionId) {
         try {
-          result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded);
+          result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress);
         } catch {
           // Stale session — clear and start fresh
           clearSession(channel);
-          result = await startSession(channel, text, state.cwd, name, onApprovalNeeded);
+          result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress);
         }
       } else {
-        result = await startSession(channel, text, state.cwd, name, onApprovalNeeded);
+        result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress);
       }
 
       // Post response in chunks
@@ -174,7 +205,7 @@ export function registerHandlers(app: App, botUserId: string): void {
           await respond("Usage: `/cc cwd /path/to/directory`");
           return;
         }
-        const resolved = resolve(path);
+        const resolved = isAbsolute(path) ? resolve(path) : resolve(homedir(), path);
         if (!existsSync(resolved)) {
           await respond(`:x: Directory not found: \`${resolved}\``);
           return;

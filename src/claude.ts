@@ -14,6 +14,8 @@ type OnApprovalNeeded = (
   input: Record<string, unknown>
 ) => Promise<ApprovalResult>;
 
+type OnProgress = (toolName: string, input: Record<string, unknown>) => void;
+
 interface QueryResult {
   result: string;
   sessionId: string;
@@ -36,7 +38,8 @@ export async function startSession(
   prompt: string,
   cwd: string,
   name: string,
-  onApprovalNeeded: OnApprovalNeeded
+  onApprovalNeeded: OnApprovalNeeded,
+  onProgress?: OnProgress
 ): Promise<QueryResult> {
   const abortController = new AbortController();
   setAbortController(channelId, abortController);
@@ -59,6 +62,7 @@ export async function startSession(
           append: `The user communicates with you remotely via a Slack bridge called Foreman. Your name in this channel is ${name}. Introduce yourself as ${name} when relevant.`,
         },
         canUseTool: createCanUseTool(onApprovalNeeded),
+        hooks: onProgress ? { PreToolUse: buildProgressHooks(onProgress) } : undefined,
         stderr: (data: string) => console.error("[claude stderr]", data),
       },
     });
@@ -78,7 +82,8 @@ export async function resumeSession(
   sessionId: string,
   cwd: string,
   name: string,
-  onApprovalNeeded: OnApprovalNeeded
+  onApprovalNeeded: OnApprovalNeeded,
+  onProgress?: OnProgress
 ): Promise<QueryResult> {
   const abortController = new AbortController();
   setAbortController(channelId, abortController);
@@ -102,6 +107,7 @@ export async function resumeSession(
           append: `The user communicates with you remotely via a Slack bridge called Foreman. Your name in this channel is ${name}. Introduce yourself as ${name} when relevant.`,
         },
         canUseTool: createCanUseTool(onApprovalNeeded),
+        hooks: onProgress ? { PreToolUse: buildProgressHooks(onProgress) } : undefined,
         stderr: (data: string) => console.error("[claude stderr]", data),
       },
     });
@@ -152,6 +158,20 @@ function createCanUseTool(onApprovalNeeded: OnApprovalNeeded) {
       return { behavior: "deny", message: "Approval request failed" };
     }
   };
+}
+
+/**
+ * Builds PreToolUse hooks that fire onProgress for auto-approved tools.
+ */
+function buildProgressHooks(onProgress: OnProgress) {
+  const makeHook = (toolName: string) => async (input: any) => {
+    onProgress(toolName, input?.tool_input || input?.input || {});
+    return {};
+  };
+  return Array.from(AUTO_APPROVE_TOOLS).map((toolName) => ({
+    matcher: toolName,
+    hooks: [makeHook(toolName)],
+  }));
 }
 
 /**
