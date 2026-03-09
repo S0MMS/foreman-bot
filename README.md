@@ -6,11 +6,15 @@ Control [Claude Code](https://claude.ai/code) sessions from Slack. Run Claude lo
 
 Foreman runs on your Mac and connects to Slack via Socket Mode (no public URL needed). You message the bot in Slack, it runs Claude Code locally, and replies with the result. Tool calls that modify files or run commands require your approval via Slack buttons.
 
-## Requirements
+## Prerequisites
 
-- Node.js 18+
-- [Claude Code](https://claude.ai/code) installed (`npm install -g @anthropic-ai/claude-code`)
-- A Slack workspace where you can create apps
+1. **[Claude Code](https://claude.ai/code)** — Foreman controls Claude Code, so you need it installed first:
+   ```sh
+   npm install -g @anthropic-ai/claude-code
+   ```
+2. **Node.js 18+**
+3. **An Anthropic API key** (`sk-ant-...`) — same key used by Claude Code
+4. **A Slack workspace** where you can create apps
 
 ## Install
 
