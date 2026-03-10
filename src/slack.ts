@@ -13,7 +13,7 @@ import {
   addPlugin,
   getPlugins,
 } from "./session.js";
-import { MODEL_ALIASES } from "./types.js";
+import { MODEL_ALIASES, generateCuteName } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { markdownToSlack, chunkMessage, formatToolRequest } from "./format.js";
 
@@ -74,21 +74,10 @@ export function registerHandlers(app: App, botUserId: string): void {
 
       // Resolve channel name (persona) on first encounter
       if (state.name === null) {
-        // DM channels start with 'D' — no meaningful channel name, use default
         if (channel.startsWith("D")) {
           setName(channel, "Foreman");
         } else {
-          try {
-            const info = await client.conversations.info({ channel });
-            const ch = info.channel as any;
-            const rawName = ch?.name || null;
-            const resolved = rawName
-              ? rawName.charAt(0).toUpperCase() + rawName.slice(1)
-              : "Foreman";
-            setName(channel, resolved);
-          } catch {
-            setName(channel, "Foreman");
-          }
+          setName(channel, generateCuteName());
         }
       }
 
@@ -384,5 +373,39 @@ export function registerHandlers(app: App, botUserId: string): void {
         });
       }
     }
+  });
+
+  // Introduce when invited to a channel
+  app.event("member_joined_channel", async ({ event, client }) => {
+    if (event.user !== botUserId) return;
+
+    const channel = event.channel;
+    const state = getState(channel);
+
+    // Assign a cute name if this is a new channel
+    if (state.name === null) {
+      if (channel.startsWith("D")) {
+        setName(channel, "Foreman");
+      } else {
+        setName(channel, generateCuteName());
+      }
+    }
+
+    const name = state.name ?? "Foreman";
+    await client.chat.postMessage({
+      channel,
+      text: [
+        `:wave: Hey! I'm *${name}*, the Claude session for this channel.`,
+        "",
+        "Send me a message and I'll get to work. Use `/cc` to configure me:",
+        "• `/cc cwd <path>` — set my working directory",
+        "• `/cc model <name>` — switch model (`opus`, `sonnet`, `haiku`)",
+        "• `/cc name <name>` — rename me",
+        "• `/cc session` — see my current config",
+        "• `/cc new` — start a fresh session",
+        "",
+        "Ready when you are!",
+      ].join("\n"),
+    });
   });
 }

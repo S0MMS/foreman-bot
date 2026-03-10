@@ -28,6 +28,25 @@ export interface ApprovalResult {
   updatedInput?: Record<string, unknown>;
 }
 
+// Cute random name generator for non-DM channels
+const ADJECTIVES = [
+  "Nimble", "Clever", "Rusty", "Quiet", "Lucky", "Gentle", "Swift", "Bright",
+  "Cozy", "Plucky", "Dusty", "Jolly", "Mossy", "Dapper", "Breezy", "Peppy",
+  "Mellow", "Scrappy", "Snappy", "Toasty", "Chirpy", "Fuzzy", "Perky", "Zesty",
+];
+
+const NOUNS = [
+  "Fox", "Badger", "Compass", "Sparrow", "Lantern", "Otter", "Pebble", "Wren",
+  "Acorn", "Cricket", "Maple", "Finch", "Clover", "Ember", "Heron", "Thistle",
+  "Minnow", "Fern", "Lark", "Bramble", "Starling", "Cobalt", "Juniper", "Dusk",
+];
+
+export function generateCuteName(): string {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${adj} ${noun}`;
+}
+
 // Tools that are auto-approved without needing a Slack button tap
 export const AUTO_APPROVE_TOOLS = new Set([
   "Read",
