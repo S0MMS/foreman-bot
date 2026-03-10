@@ -205,7 +205,8 @@ export function registerHandlers(app: App, botUserId: string): void {
           await respond("Usage: `/cc cwd /path/to/directory`");
           return;
         }
-        const resolved = isAbsolute(path) ? resolve(path) : resolve(homedir(), path);
+        const expanded = path.startsWith("~/") ? path.slice(2) : path.startsWith("~") ? "" : path;
+        const resolved = isAbsolute(path) ? resolve(path) : resolve(homedir(), expanded);
         if (!existsSync(resolved)) {
           await respond(`:x: Directory not found: \`${resolved}\``);
           return;

@@ -63,7 +63,7 @@ When Claude wants to edit a file or run a shell command, Foreman posts an **Appr
 
 | Command | Description |
 |---|---|
-| `/cc cwd <path>` | Set working directory for this channel |
+| `/cc cwd <path>` | Set working directory for this channel (`~/` paths supported) |
 | `/cc model <name>` | Set model (`opus`, `sonnet`, `haiku`, or full model ID) |
 | `/cc name <name>` | Override the bot's persona name for this channel |
 | `/cc plugin <path>` | Load a Claude Code plugin |
