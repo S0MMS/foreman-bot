@@ -22,17 +22,21 @@ export function createCanvasMcpServer(channelId: string, app: App) {
     tools: [
       tool(
         "CanvasRead",
-        "Read the full content of this Slack channel's canvas. Returns the canvas content as markdown text. " +
+        "Read the full content of a Slack channel's canvas. Returns the canvas content as markdown text. " +
         "Sections created by bots are tagged with *[bot-name] Heading* format. " +
-        "Sections without a tag were created by humans. Use this to understand the canvas before making changes.",
-        {},
-        async () => {
+        "Sections without a tag were created by humans. Use this to understand the canvas before making changes. " +
+        "To read another channel's canvas, pass its channel_id (e.g. 'C0ABC123'). Omit to read the current channel's canvas.",
+        {
+          channel_id: z.string().optional().describe("Optional channel ID to read from a different channel (e.g. 'C0ABC123'). Omit to read the current channel."),
+        },
+        async ({ channel_id }) => {
+          const targetChannel = channel_id || channelId;
           try {
-            const canvas = await fetchChannelCanvas(app, channelId);
+            const canvas = await fetchChannelCanvas(app, targetChannel);
             if (!canvas) {
-              return { content: [{ type: "text" as const, text: "No canvas found for this channel." }] };
+              return { content: [{ type: "text" as const, text: `No canvas found for channel ${targetChannel}.` }] };
             }
-            setCanvasFileId(channelId, canvas.fileId);
+            if (!channel_id) setCanvasFileId(channelId, canvas.fileId); // only cache for current channel
 
             // Annotate the content with ownership info
             const botName = getBotName();
