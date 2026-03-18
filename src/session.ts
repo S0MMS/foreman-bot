@@ -14,9 +14,11 @@ function createDefaultState(): SessionState {
   return {
     sessionId: null,
     name: null,
+    ownerId: null,
     cwd: process.env.CLAUDE_CWD || process.cwd(),
     model: DEFAULT_MODEL,
     plugins: [],
+    canvasFileId: null,
     isRunning: false,
     abortController: null,
     pendingApproval: null,
@@ -31,6 +33,7 @@ function save(): void {
       persisted[channelId] = {
         sessionId: state.sessionId,
         name: state.name,
+        ownerId: state.ownerId,
         cwd: state.cwd,
         model: state.model,
         plugins: state.plugins,
@@ -50,6 +53,7 @@ export function loadSessions(): void {
       const state = createDefaultState();
       state.sessionId = saved.sessionId ?? null;
       state.name = saved.name ?? null;
+      state.ownerId = saved.ownerId ?? null;
       state.cwd = saved.cwd ?? state.cwd;
       state.model = saved.model ?? DEFAULT_MODEL;
       state.plugins = saved.plugins ?? [];
@@ -105,6 +109,11 @@ export function setName(channelId: string, name: string): void {
   save();
 }
 
+export function setOwner(channelId: string, ownerId: string): void {
+  getState(channelId).ownerId = ownerId;
+  save();
+}
+
 export function setCwd(channelId: string, cwd: string): void {
   getState(channelId).cwd = cwd;
   save();
@@ -125,6 +134,10 @@ export function addPlugin(channelId: string, path: string): void {
 
 export function getPlugins(channelId: string): string[] {
   return getState(channelId).plugins;
+}
+
+export function setCanvasFileId(channelId: string, fileId: string | null): void {
+  getState(channelId).canvasFileId = fileId;
 }
 
 export function setRunning(channelId: string, running: boolean): void {
@@ -153,3 +166,4 @@ export function clearSession(channelId: string): void {
   state.pendingApproval = null;
   save();
 }
+

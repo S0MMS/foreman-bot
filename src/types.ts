@@ -1,9 +1,11 @@
 export interface SessionState {
   sessionId: string | null;
   name: string | null;
+  ownerId: string | null;
   cwd: string;
   model: string;
   plugins: string[];
+  canvasFileId: string | null;
   isRunning: boolean;
   abortController: AbortController | null;
   pendingApproval: PendingApproval | null;
@@ -21,6 +23,7 @@ export interface PendingApproval {
   resolve: (result: ApprovalResult) => void;
   toolName: string;
   input: Record<string, unknown>;
+  requesterId: string;
 }
 
 export interface ApprovalResult {
@@ -28,23 +31,33 @@ export interface ApprovalResult {
   updatedInput?: Record<string, unknown>;
 }
 
-// Cute random name generator for non-DM channels
+export interface ImageAttachment {
+  base64: string;
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+}
+
+const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+export { SUPPORTED_IMAGE_TYPES };
+
+// Pirate name generator for non-DM channels
 const ADJECTIVES = [
-  "Nimble", "Clever", "Rusty", "Quiet", "Lucky", "Gentle", "Swift", "Bright",
-  "Cozy", "Plucky", "Dusty", "Jolly", "Mossy", "Dapper", "Breezy", "Peppy",
-  "Mellow", "Scrappy", "Snappy", "Toasty", "Chirpy", "Fuzzy", "Perky", "Zesty",
+  "Dread", "Scurvy", "Plunderin'", "Fearsome", "Barnacled", "Seafarin'",
+  "Cursed", "Salty", "Swashbucklin'", "Bilge-soaked", "Rum-soaked", "Pillaging",
+  "Storm-weathered", "One-eyed", "Hook-handed", "Blackhearted", "Roguish",
+  "Wretched", "Marooned", "Treacherous",
 ];
 
-const NOUNS = [
-  "Fox", "Badger", "Compass", "Sparrow", "Lantern", "Otter", "Pebble", "Wren",
-  "Acorn", "Cricket", "Maple", "Finch", "Clover", "Ember", "Heron", "Thistle",
-  "Minnow", "Fern", "Lark", "Bramble", "Starling", "Cobalt", "Juniper", "Dusk",
+const NAMES = [
+  "Blackbeard", "Redbeard", "Silverteeth", "Ironjaw", "Cutlass", "Flintlock",
+  "Stormcrow", "Gallows", "Barnacle", "Kraken", "Tortuga", "Davy", "Jolly",
+  "Cannon", "Mainsail", "Brine", "Scallywag", "Bosun", "Quarterdeck", "Foulweather",
+  "Broadside", "Crow", "Bilge", "Starboard",
 ];
 
 export function generateCuteName(): string {
   const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  return `${adj} ${noun}`;
+  const name = NAMES[Math.floor(Math.random() * NAMES.length)];
+  return `${adj} ${name}`;
 }
 
 // Tools that are auto-approved without needing a Slack button tap
@@ -57,4 +70,29 @@ export const AUTO_APPROVE_TOOLS = new Set([
   "Task",
   "Explore",
   "AskUserQuestion",
+  "CanvasRead",
+  "CanvasCreate",
+  "CanvasUpdate",
+  "CanvasDelete",
+  "CanvasReadById",
+  "CanvasUpdateById",
+  "CanvasDeleteById",
+  "DiagramCreate",
+  "SelfReboot",
+  "JiraCreateTicket",
+  "JiraUpdateTicket",
+  "JiraReadTicket",
+  "JiraSearch",
+  "JiraAddComment",
+  "JiraUpdateComment",
+  "JiraDeleteComment",
+  "ConfluenceReadPage",
+  "ConfluenceSearch",
+  "ConfluenceCreatePage",
+  "ConfluenceUpdatePage",
+  "GitHubCreatePR",
+  "GitHubReadPR",
+  "GitHubReadIssue",
+  "GitHubSearch",
+  "GitHubListPRs",
 ]);

@@ -10,6 +10,18 @@ export interface ForemanConfig {
   slackAppToken?: string;
   anthropicApiKey?: string;
   defaultCwd?: string;
+  bitriseToken?: string;
+  bitriseAppSlug?: string;
+  buildWorkspace?: string;   // absolute path to .xcworkspace or .xcodeproj
+  buildScheme?: string;      // Xcode scheme name
+  buildSimulatorUDID?: string; // target simulator UDID
+  buildBundleId?: string;    // bundle ID to launch after install
+  jiraHost?: string;         // e.g. https://myfitnesspal.atlassian.net
+  jiraEmail?: string;        // Jira account email
+  jiraApiToken?: string;     // Jira API token
+  jiraProjectKey?: string;   // e.g. POW
+  mentionsChannel?: string;  // Slack channel ID to route Jira mentions to (e.g. C08XXXXXXX)
+  mentionsPollMinutes?: number; // How often to poll for mentions (default: 1)
 }
 
 export function readConfig(): ForemanConfig {

@@ -1,6 +1,6 @@
 {
   "name": "foreman-bot",
-  "version": "1.1.6",
+  "version": "1.2.0",
   "description": "Control Claude Code sessions from Slack",
   "type": "module",
   "main": "dist/index.js",
@@ -32,7 +32,9 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.70",
     "@slack/bolt": "^4.1.0",
-    "dotenv": "^16.4.7"
+    "@types/express": "^5.0.6",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

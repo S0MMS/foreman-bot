@@ -1,21 +1,37 @@
 import type { App } from "@slack/bolt";
 import type { ApprovalResult } from "./types.js";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { isAbsolute, join, resolve } from "path";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs";
+import { execSync, spawn } from "child_process";
+import { homedir, tmpdir } from "os";
+import { dirname, isAbsolute, join, resolve } from "path";
+import { randomUUID } from "crypto";
+import { createRequire } from "module";
+
+const _require = createRequire(import.meta.url);
+const FOREMAN_VERSION: string = _require("../package.json").version;
+
+// Resolve SDK version by finding the package directory (avoids exports restriction on ./package.json)
+const sdkEntry = _require.resolve("@anthropic-ai/claude-agent-sdk");
+const sdkPkgPath = join(dirname(sdkEntry).replace(/\/dist.*$/, "").replace(/\/src.*$/, ""), "package.json");
+const SDK_VERSION: string = _require(sdkPkgPath).version;
 import {
   getState,
   setCwd,
   setModel,
   setName,
+  setOwner,
   clearSession,
   setPendingApproval,
   addPlugin,
   getPlugins,
+  setCanvasFileId,
 } from "./session.js";
-import { MODEL_ALIASES, generateCuteName } from "./types.js";
+import { MODEL_ALIASES, generateCuteName, SUPPORTED_IMAGE_TYPES } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { markdownToSlack, chunkMessage, formatToolRequest } from "./format.js";
+import { readConfig } from "./config.js";
+import { fetchChannelCanvas, appendCanvasContent } from "./canvas.js";
+import { createCanvasMcpServer } from "./mcp-canvas.js";
 
 
 /**
@@ -41,141 +57,186 @@ function formatProgress(toolName: string, input: Record<string, unknown>): strin
   }
 }
 
+function mimetypeToExt(mimetype: string): string {
+  switch (mimetype) {
+    case "image/jpeg": return "jpg";
+    case "image/gif": return "gif";
+    case "image/webp": return "webp";
+    default: return "png";
+  }
+}
+
+/**
+ * Download image files from Slack and save to the working directory.
+ * Returns the saved file paths.
+ */
+async function downloadSlackImages(files: any[], token: string): Promise<string[]> {
+  const imageDir = join(tmpdir(), "foreman-images");
+  mkdirSync(imageDir, { recursive: true });
+  const savedPaths: string[] = [];
+  for (const file of files) {
+    const imageUrl = file.url_private_download || file.url_private;
+    if (!SUPPORTED_IMAGE_TYPES.has(file.mimetype) || !imageUrl) continue;
+    try {
+      const res = await fetch(imageUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        console.error(`[images] Download failed for ${file.name}: HTTP ${res.status}`);
+        continue;
+      }
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.startsWith("image/")) {
+        const preview = await res.text();
+        console.error(`[images] Unexpected content-type "${contentType}" for ${file.name}. Body preview: ${preview.slice(0, 200)}`);
+        continue;
+      }
+      const buffer = Buffer.from(await res.arrayBuffer());
+      const ext = mimetypeToExt(file.mimetype);
+      const savePath = join(imageDir, `${randomUUID()}.${ext}`);
+      writeFileSync(savePath, buffer);
+      savedPaths.push(savePath);
+    } catch {
+      // Skip failed downloads
+    }
+  }
+  return savedPaths;
+}
+
+const CANVAS_READ_INTENT = /\b(read|load|show|open|get|fetch|pull)\b.{0,20}\bcanvas\b|\bcanvas\b.{0,20}\b(read|load|show|open|get|fetch|pull)\b/i;
+const CANVAS_WRITE_INTENT = /\b(write|update|save|add|put|commit|push)\b.*\bcanvas\b|\bcanvas\b.*\b(write|update|save|add|put|commit|push)\b/i;
+
+
+/**
+ * Process a text message through the Claude session for a channel and post the response.
+ * Used by both the Slack message handler and /cc dispatch.
+ */
+async function processChannelMessage(
+  app: App,
+  channel: string,
+  text: string,
+  requesterId: string,
+  imagePaths: string[] = []
+): Promise<void> {
+  const state = getState(channel);
+
+  // Resolve channel name (persona) on first encounter
+  if (state.name === null) {
+    setName(channel, channel.startsWith("D") ? "Foreman" : generateCuteName());
+  }
+
+  // First person to message becomes the channel owner
+  if (state.ownerId === null && requesterId) {
+    setOwner(channel, requesterId);
+  }
+
+  const name = state.name ?? "Foreman";
+
+  const onApprovalNeeded = async (
+    toolName: string,
+    input: Record<string, unknown>
+  ): Promise<ApprovalResult> => {
+    return new Promise<ApprovalResult>((resolve) => {
+      setPendingApproval(channel, { resolve, toolName, input, requesterId });
+      const description = formatToolRequest(toolName, input);
+      app.client.chat.postMessage({
+        channel,
+        text: `Tool approval needed: ${toolName}`,
+        blocks: [
+          {
+            type: "section",
+            text: { type: "mrkdwn", text: `:wrench: *${toolName}*\n${description}` },
+          },
+          {
+            type: "actions",
+            elements: [
+              { type: "button", text: { type: "plain_text", text: "Approve" }, style: "primary", action_id: "approve_tool" },
+              { type: "button", text: { type: "plain_text", text: "Deny" }, style: "danger", action_id: "deny_tool" },
+            ],
+          },
+        ],
+      });
+    });
+  };
+
+  const onProgress = (toolName: string, input: Record<string, unknown>) => {
+    app.client.chat.postMessage({ channel, text: formatProgress(toolName, input) }).catch(() => {});
+  };
+
+  const mcpServer = createCanvasMcpServer(channel, app);
+
+  let result;
+  if (state.sessionId) {
+    try {
+      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer);
+    } catch {
+      clearSession(channel);
+      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer);
+    }
+  } else {
+    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer);
+  }
+
+  for (const p of imagePaths) {
+    try { unlinkSync(p); } catch { /* ignore */ }
+  }
+
+  const slackText = markdownToSlack(result.result || "(no response)");
+  for (const chunk of chunkMessage(slackText)) {
+    await app.client.chat.postMessage({ channel, text: chunk });
+  }
+  if (result.cost > 0) {
+    await app.client.chat.postMessage({ channel, text: `_${result.turns} turns | $${result.cost.toFixed(4)}_` });
+  }
+}
+
 /**
  * Register all Slack event handlers on the Bolt app.
  * Each channel gets its own independent session.
  */
-export function registerHandlers(app: App, botUserId: string): void {
+export function registerHandlers(app: App, botUserId: string, botId: string): void {
   app.message(async ({ message, client }) => {
+    const hasText = "text" in message && message.text;
+    const hasFiles = "files" in message && Array.isArray((message as any).files) && (message as any).files.length > 0;
+
     if (
-      !("text" in message) ||
-      !message.text ||
-      ("bot_id" in message && message.bot_id) ||
-      ("subtype" in message && message.subtype)
+      (!hasText && !hasFiles) ||
+      ("bot_id" in message && (message as any).bot_id) ||
+      ("subtype" in message && message.subtype && (message as any).subtype !== "file_share")
     ) {
       return;
     }
 
-    const raw = message.text.trim();
-    // Allow ! prefix as an escape hatch for Claude slash commands (e.g. !freud:pull main → /freud:pull main)
+    const raw = (hasText ? (message as any).text : "").trim();
     const text = raw.startsWith("!") ? "/" + raw.slice(1) : raw;
     const channel = message.channel;
     const ts = message.ts;
+    const requesterId = ("user" in message && message.user) ? message.user : "";
 
-    // Add thinking reaction
+    const files = hasFiles ? (message as any).files : [];
+    const imagePaths = files.length > 0
+      ? await downloadSlackImages(files, process.env.SLACK_BOT_TOKEN || "")
+      : [];
+
+    if (!text && imagePaths.length === 0) return;
+
     try {
       await client.reactions.add({ channel, timestamp: ts, name: "thinking_face" });
-    } catch {
-      // Ignore
-    }
+    } catch { /* ignore */ }
 
     try {
-      const state = getState(channel);
-
-      // Resolve channel name (persona) on first encounter
-      if (state.name === null) {
-        if (channel.startsWith("D")) {
-          setName(channel, "Foreman");
-        } else {
-          setName(channel, generateCuteName());
-        }
-      }
-
-      const name = state.name ?? "Foreman";
-
-      const onApprovalNeeded = async (
-        toolName: string,
-        input: Record<string, unknown>
-      ): Promise<ApprovalResult> => {
-        return new Promise<ApprovalResult>((resolve) => {
-          setPendingApproval(channel, { resolve, toolName, input });
-
-          const description = formatToolRequest(toolName, input);
-          app.client.chat.postMessage({
-            channel,
-            text: `Tool approval needed: ${toolName}`,
-            blocks: [
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:wrench: *${toolName}*\n${description}`,
-                },
-              },
-              {
-                type: "actions",
-                elements: [
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "Approve" },
-                    style: "primary",
-                    action_id: "approve_tool",
-                  },
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "Deny" },
-                    style: "danger",
-                    action_id: "deny_tool",
-                  },
-                ],
-              },
-            ],
-          });
-        });
-      };
-
-      const onProgress = (toolName: string, input: Record<string, unknown>) => {
-        app.client.chat.postMessage({
-          channel,
-          text: formatProgress(toolName, input),
-        }).catch(() => {/* ignore */});
-      };
-
-      let result;
-      if (state.sessionId) {
-        try {
-          result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress);
-        } catch {
-          // Stale session — clear and start fresh
-          clearSession(channel);
-          result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress);
-        }
-      } else {
-        result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress);
-      }
-
-      // Post response in chunks
-      const slackText = markdownToSlack(result.result || "(no response)");
-      const chunks = chunkMessage(slackText);
-      for (const chunk of chunks) {
-        await client.chat.postMessage({ channel, text: chunk });
-      }
-
-      // Post cost info
-      if (result.cost > 0) {
-        await client.chat.postMessage({
-          channel,
-          text: `_${result.turns} turns | $${result.cost.toFixed(4)}_`,
-        });
-      }
-
-      // Swap reaction to checkmark
+      await processChannelMessage(app, channel, text, requesterId, imagePaths);
       try {
         await client.reactions.remove({ channel, timestamp: ts, name: "thinking_face" });
         await client.reactions.add({ channel, timestamp: ts, name: "white_check_mark" });
-      } catch {
-        // Ignore
-      }
+      } catch { /* ignore */ }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await client.chat.postMessage({ channel, text: `:x: Error: ${errorMsg}` });
-
       try {
         await client.reactions.remove({ channel, timestamp: ts, name: "thinking_face" });
         await client.reactions.add({ channel, timestamp: ts, name: "x" });
-      } catch {
-        // Ignore
-      }
+      } catch { /* ignore */ }
     }
   });
 
@@ -184,24 +245,76 @@ export function registerHandlers(app: App, botUserId: string): void {
     await ack();
 
     const channel = command.channel_id;
+    const userId = command.user_id;
     const args = command.text.trim().split(/\s+/);
     const subcommand = args[0]?.toLowerCase();
+
+    // Commands restricted to channel owner
+    const OWNER_ONLY = new Set(["cwd", "new", "reboot"]);
+    if (OWNER_ONLY.has(subcommand)) {
+      const state = getState(channel);
+      if (state.ownerId && userId !== state.ownerId) {
+        await respond(`:lock: Only <@${state.ownerId}> can run \`/cc ${subcommand}\` in this channel.`);
+        return;
+      }
+    }
+
+    // Helper: send a prompt through the Claude session and post the response
+    const runCanvasPrompt = async (prompt: string): Promise<string> => {
+      const state = getState(channel);
+      const name = state.name ?? "Foreman";
+      const canvasMcp = createCanvasMcpServer(channel, app);
+      const onApprovalNeeded = async (toolName: string, input: Record<string, unknown>) =>
+        new Promise<ApprovalResult>((resolve) => {
+          setPendingApproval(channel, { resolve, toolName, input, requesterId: userId });
+          const description = formatToolRequest(toolName, input);
+          app.client.chat.postMessage({
+            channel,
+            text: `Tool approval needed: ${toolName}`,
+            blocks: [
+              { type: "section", text: { type: "mrkdwn", text: `:wrench: *${toolName}*\n${description}` } },
+              { type: "actions", elements: [
+                { type: "button", text: { type: "plain_text", text: "Approve" }, style: "primary", action_id: "approve_tool" },
+                { type: "button", text: { type: "plain_text", text: "Deny" }, style: "danger", action_id: "deny_tool" },
+              ]},
+            ],
+          });
+        });
+      const onProgress = (toolName: string, input: Record<string, unknown>) => {
+        app.client.chat.postMessage({ channel, text: formatProgress(toolName, input) }).catch(() => {});
+      };
+
+      let result;
+      if (state.sessionId) {
+        try {
+          result = await resumeSession(channel, prompt, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp);
+        } catch {
+          clearSession(channel);
+          result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp);
+        }
+      } else {
+        result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp);
+      }
+      return result.result || "(no response)";
+    };
 
     switch (subcommand) {
       case "cwd": {
         const path = args[1];
         if (!path) {
-          await respond("Usage: `/cc cwd /path/to/directory`");
+          await respond("Usage: `/cc cwd /absolute/path`");
           return;
         }
-        const expanded = path.startsWith("~/") ? path.slice(2) : path.startsWith("~") ? "" : path;
-        const resolved = isAbsolute(path) ? resolve(path) : resolve(homedir(), expanded);
-        if (!existsSync(resolved)) {
-          await respond(`:x: Directory not found: \`${resolved}\``);
+        if (!isAbsolute(path)) {
+          await respond(`:x: Path must be absolute. Example: \`/cc cwd /Users/you/project\``);
           return;
         }
-        setCwd(channel, resolved);
-        await respond(`Working directory set to \`${resolved}\``);
+        if (!existsSync(path)) {
+          await respond(`:x: Directory not found: \`${path}\``);
+          return;
+        }
+        setCwd(channel, path);
+        await respond(`Working directory set to \`${path}\``);
         break;
       }
 
@@ -244,6 +357,7 @@ export function registerHandlers(app: App, botUserId: string): void {
           `• Working dir: \`${state.cwd}\``,
           `• Running: ${state.isRunning ? "yes" : "no"}`,
           `• Plugins: ${plugins.length === 0 ? "none" : plugins.map((p) => p.split("/").pop()).join(", ")}`,
+          `• Foreman: v${FOREMAN_VERSION} | SDK: v${SDK_VERSION}`,
         ];
         await respond(lines.join("\n"));
         break;
@@ -300,6 +414,220 @@ export function registerHandlers(app: App, botUserId: string): void {
         break;
       }
 
+      case "canvas": {
+        const canvasSubcommand = args[1]?.toLowerCase();
+
+        if (canvasSubcommand === "read") {
+          // Load canvas, summarize, then immediately start clarifying Q&A
+          try {
+            const canvas = await fetchChannelCanvas(app, channel);
+            if (!canvas) { await respond(":x: No canvas found for this channel."); return; }
+            setCanvasFileId(channel, canvas.fileId);
+            await respond("_Reading canvas..._");
+            const responseText = await runCanvasPrompt(
+              `You are a senior product analyst helping refine a feature specification. The user has shared this channel's canvas describing a feature they want to build. Here is its full content:\n\n${canvas.content}\n\n` +
+              `First, briefly summarize what the feature is in 2-3 sentences. Then immediately begin asking clarifying questions to fully understand the feature — covering user goals, edge cases, error states, permissions, data requirements, and anything else needed to write solid acceptance criteria. ` +
+              `Ask 2-3 focused questions to start. After the user answers, ask follow-up questions as needed. ` +
+              `When you feel you have enough information, let them know they can run \`/cc canvas write\` to generate and save the acceptance criteria to the canvas.`
+            );
+            for (const chunk of chunkMessage(markdownToSlack(responseText))) {
+              await app.client.chat.postMessage({ channel, text: chunk });
+            }
+          } catch (err) {
+            await app.client.chat.postMessage({ channel, text: `:x: Canvas error: ${err instanceof Error ? err.message : String(err)}` });
+          }
+
+        } else if (canvasSubcommand === "write") {
+          // Generate acceptance criteria and write to canvas (replace if already exists)
+          try {
+            const state = getState(channel);
+            const fileId = state.canvasFileId;
+            if (!fileId) {
+              await respond(":x: No canvas loaded. Run `/cc canvas read` first.");
+              return;
+            }
+            await respond("_Generating acceptance criteria..._");
+            const criteria = await runCanvasPrompt(
+              `Based on our conversation about the feature, write comprehensive acceptance criteria. ` +
+              `Format them in Gherkin style (Given/When/Then) where appropriate, grouped by scenario. ` +
+              `Use markdown with a "## Acceptance Criteria" header. Be thorough — cover happy paths, edge cases, and error states. ` +
+              `Output only the acceptance criteria markdown, nothing else.`
+            );
+
+            await appendCanvasContent(app, fileId, criteria, state.name ?? "Foreman");
+            await app.client.chat.postMessage({ channel, text: ":white_check_mark: Acceptance criteria written to the canvas!" });
+          } catch (err) {
+            await app.client.chat.postMessage({ channel, text: `:x: Canvas write error: ${err instanceof Error ? err.message : String(err)}` });
+          }
+
+        } else {
+          await respond(
+            "*Canvas commands:*\n" +
+            "• `/cc canvas read` — load canvas, summarize it, and start clarifying Q&A\n" +
+            "• `/cc canvas write` — generate and save acceptance criteria to the canvas"
+          );
+        }
+        break;
+      }
+
+      case "spec": {
+        try {
+          const canvas = await fetchChannelCanvas(app, channel);
+          if (!canvas) {
+            await respond(":x: No canvas found for this channel.");
+            return;
+          }
+          setCanvasFileId(channel, canvas.fileId);
+          await respond("_Reading canvas and processing feature spec..._");
+
+          const specPrompt = `You are processing a feature canvas. Here is the full canvas content:\n\n${canvas.content}\n\n` +
+            `Follow these steps EXACTLY:\n\n` +
+            `**STEP 1: Ask Questions**\n` +
+            `Post 3-7 focused questions in this channel. Ask both TECHNICAL questions (architecture, APIs, data model, edge cases, feature flags) and UI/UX questions (error states, loading states, dark mode, animations, screen sizes). Do NOT write anything to the canvas yet. Do NOT ask for permission to write — just ask your questions and wait for answers.\n\n` +
+            `**STEP 2: Write Tech Spec to Canvas (after user answers)**\n` +
+            `After the user answers your questions, use the CanvasCreate tool to write a Tech Spec to the canvas with these sections: Overview, Architecture, Data Model, API Contract, Dependencies, Testing Strategy, Rollout Plan, Open Questions. Skip sections that don't apply.\n\n` +
+            `**STEP 3: Write Acceptance Criteria to Canvas**\n` +
+            `Immediately after writing the tech spec, use CanvasCreate to write acceptance criteria to the canvas. THIS IS MANDATORY: You MUST use Gherkin format. Every single criterion MUST have Given, When, Then keywords. Format EXACTLY like this:\n\n` +
+            `**AC-1: Scenario name**\n\n` +
+            `\`Given\` some precondition\n\n` +
+            `\`When\` an action happens\n\n` +
+            `\`Then\` expected outcome\n\n` +
+            `\`And\` additional outcome\n\n` +
+            `Each Given/When/Then/And MUST be on its own line, wrapped in backticks, with a BLANK LINE between each line. Do NOT use bullet points or plain text for acceptance criteria. Do NOT ask for permission before writing to the canvas.\n\n` +
+            `Start now with Step 1 — ask your questions.`;
+
+          const responseText = await runCanvasPrompt(specPrompt);
+          for (const chunk of chunkMessage(markdownToSlack(responseText))) {
+            await app.client.chat.postMessage({ channel, text: chunk });
+          }
+        } catch (err) {
+          await app.client.chat.postMessage({
+            channel,
+            text: `:x: Spec error: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        break;
+      }
+
+      case "implement": {
+        try {
+          const canvas = await fetchChannelCanvas(app, channel);
+          if (!canvas) {
+            await respond(":x: No canvas found for this channel. Add a feature spec to the canvas first, or run `/cc spec` to generate one.");
+            return;
+          }
+          setCanvasFileId(channel, canvas.fileId);
+
+          const state = getState(channel);
+
+          // Auto-detect platform from cwd, with optional override: /cc implement android
+          const platformArg = args[1]?.toLowerCase();
+          let platform: { name: string; lang: string; projectType: string; buildTool: string; uiNote: string };
+
+          if (platformArg === "android" || (!platformArg && existsSync(join(state.cwd, "build.gradle")) || existsSync(join(state.cwd, "build.gradle.kts")) || existsSync(join(state.cwd, "settings.gradle")) || existsSync(join(state.cwd, "settings.gradle.kts")))) {
+            platform = {
+              name: "Android",
+              lang: "Kotlin",
+              projectType: "Android Studio project",
+              buildTool: "Gradle",
+              uiNote: "view patterns (Jetpack Compose vs XML layouts), ViewModels, dependency injection (Hilt/Dagger), navigation, networking layer (Retrofit/OkHttp), data models",
+            };
+          } else if (platformArg === "web" || (!platformArg && existsSync(join(state.cwd, "package.json")) && !existsSync(join(state.cwd, "ios")))) {
+            platform = {
+              name: "Web",
+              lang: "TypeScript/JavaScript",
+              projectType: "web project",
+              buildTool: "npm/yarn",
+              uiNote: "component patterns (React/Vue/etc), state management, routing, API integration, styling approach",
+            };
+          } else {
+            platform = {
+              name: "iOS",
+              lang: "Swift",
+              projectType: "Xcode project",
+              buildTool: "Xcode",
+              uiNote: "view patterns (SwiftUI vs UIKit), networking layer, data models",
+            };
+          }
+
+          await respond(`:rocket: Implementing ${platform.name} feature from canvas in \`${state.cwd}\`...\n_This may take a while. I'll post progress as I go._`);
+
+          const implementPrompt = `You are implementing a feature in a ${platform.name}/${platform.lang} project. The working directory is set to the ${platform.projectType}.\n\n` +
+            `Here is the full canvas content (which includes the feature description, wireframes/mockups, tech spec, and acceptance criteria):\n\n${canvas.content}\n\n` +
+            `Follow these steps EXACTLY:\n\n` +
+            `**STEP 1: Understand the Codebase**\n` +
+            `Use Glob and Grep to explore the project structure. Find existing patterns, conventions, and architectural decisions. Look at how similar features are built — file organization, naming conventions, ${platform.uiNote}, etc. Do NOT skip this step.\n\n` +
+            `**STEP 2: Plan the Implementation**\n` +
+            `Based on the tech spec and your codebase exploration, list the files you will create or modify. Post this plan in the channel before writing any code.\n\n` +
+            `**STEP 3: Implement**\n` +
+            `Write the ${platform.lang} code. Create new files and modify existing ones as needed. Follow the project's existing conventions exactly — same patterns, same style, same architecture. Use the acceptance criteria as your definition of done. Every AC scenario should be covered by the implementation.\n\n` +
+            `**STEP 4: Summary**\n` +
+            `Post a summary of what you built — files created, files modified, and how the acceptance criteria are satisfied.\n\n` +
+            `IMPORTANT: Do NOT ask for permission before writing files. The user has already asked you to implement — just do it. Use the canvas images (wireframes/mockups) to inform your UI implementation. Match the layouts, colors, and interactions shown in the designs as closely as possible.`;
+
+          const responseText = await runCanvasPrompt(implementPrompt);
+          for (const chunk of chunkMessage(markdownToSlack(responseText))) {
+            await app.client.chat.postMessage({ channel, text: chunk });
+          }
+        } catch (err) {
+          await app.client.chat.postMessage({
+            channel,
+            text: `:x: Implement error: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        break;
+      }
+
+      case "dispatch": {
+        // Fan-out a plain message to one or more channels.
+        // Usage: /cc dispatch #channel1 #channel2 [... message text]
+        // Channel args come first; everything after the last channel arg is the message.
+        const channelArgs: string[] = [];
+        let msgStartIdx = 1;
+        for (let i = 1; i < args.length; i++) {
+          const arg = args[i];
+          const mentionMatch = arg.match(/<#([A-Z0-9]+)/);
+          if (mentionMatch) { channelArgs.push(mentionMatch[1]); msgStartIdx = i + 1; continue; }
+          if (/^[A-Z0-9]{8,}$/.test(arg)) { channelArgs.push(arg); msgStartIdx = i + 1; continue; }
+          const channelName = arg.replace(/^#/, "");
+          const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+          const found = (listRes.channels || []).find((c: any) => c.name === channelName);
+          if (found?.id) { channelArgs.push(found.id); msgStartIdx = i + 1; continue; }
+          break; // first non-channel arg starts the message
+        }
+
+        if (channelArgs.length === 0) {
+          await respond(":x: Usage: `/cc dispatch #channel1 #channel2 [message]`");
+          return;
+        }
+
+        const dispatchMsg = args.slice(msgStartIdx).join(" ") || "implement feature";
+
+        let sent = 0;
+        for (const workerId of channelArgs) {
+          try {
+            // Post the message visibly in the worker channel
+            await app.client.chat.postMessage({ channel: workerId, text: dispatchMsg });
+            // Directly invoke the worker session (Slack won't echo our own bot messages back)
+            processChannelMessage(app, workerId, dispatchMsg, "").catch((err) => {
+              app.client.chat.postMessage({
+                channel,
+                text: `:x: Worker <#${workerId}> error: ${err instanceof Error ? err.message : String(err)}`,
+              }).catch(() => {});
+            });
+            sent++;
+          } catch (err) {
+            await app.client.chat.postMessage({
+              channel,
+              text: `:x: Failed to send to <#${workerId}>: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
+        }
+
+        await respond(`:white_check_mark: Dispatched to ${sent} channel(s): "${dispatchMsg}"`);
+        break;
+      }
+
       case "reboot": {
         await respond(":recycle: Rebooting Foreman...");
         // Give Slack time to deliver the response, then exit.
@@ -308,6 +636,403 @@ export function registerHandlers(app: App, botUserId: string): void {
           console.log("Reboot requested via /cc reboot — exiting for restart");
           process.exit(0);
         }, 1500);
+        break;
+      }
+
+      case "commit": {
+        const message = args.slice(1).join(" ");
+        if (!message) {
+          await respond("Usage: `/cc commit <message>`");
+          return;
+        }
+        const cwd = getState(channel).cwd;
+        try {
+          execSync("git add -A", { cwd, encoding: "utf8" });
+          execSync(`git commit -m ${JSON.stringify(message)}`, { cwd, encoding: "utf8" });
+          const sha = execSync("git rev-parse --short HEAD", { cwd, encoding: "utf8" }).trim();
+          await respond(`:white_check_mark: Committed \`${sha}\`: _${message}_`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await respond(`:x: Commit failed: ${msg}`);
+        }
+        break;
+      }
+
+      case "push": {
+        const cwd = getState(channel).cwd;
+        try {
+          const branch = execSync("git branch --show-current", { cwd, encoding: "utf8" }).trim();
+          if (!branch) throw new Error("detached HEAD or no branch");
+          await respond(`:arrow_up: Pushing \`${branch}\`...`);
+          execSync("git push", { cwd, encoding: "utf8" });
+          await app.client.chat.postMessage({ channel, text: `:white_check_mark: Pushed \`${branch}\` to origin.` });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await app.client.chat.postMessage({ channel, text: `:x: Push failed: ${msg}` });
+        }
+        break;
+      }
+
+      case "run": {
+        // Install + launch the last built app on a simulator (skips xcodebuild)
+        const runState = getState(channel);
+        const runCwd = runState.cwd;
+
+        // Find .xcworkspace in cwd
+        let runWorkspace: string;
+        try {
+          const found = execSync("find . -maxdepth 1 -name '*.xcworkspace' | head -1", { cwd: runCwd, encoding: "utf8" }).trim();
+          if (!found) throw new Error("none found");
+          runWorkspace = found.replace(/^\.\//, "");
+        } catch {
+          await respond(`:x: No \`.xcworkspace\` found in \`${runCwd}\`. Use \`/cc cwd <path>\` to point to your Xcode project.`);
+          return;
+        }
+
+        const runScheme = args[1] ?? runWorkspace.replace(/\.xcworkspace$/, "");
+        const runSimName = args.length > 2 ? args.slice(2).join(" ") : null;
+
+        // Find simulator
+        let runUdid: string;
+        let runSimDisplayName: string;
+        try {
+          const simList = execSync("xcrun simctl list devices --json", { encoding: "utf8" });
+          const json = JSON.parse(simList) as { devices: Record<string, { udid: string; name: string; state: string }[]> };
+          const allDevices = Object.values(json.devices).flat();
+
+          if (runSimName) {
+            const match = allDevices.find(d => d.name.toLowerCase() === runSimName.toLowerCase());
+            if (!match) {
+              const available = allDevices
+                .filter(d => d.state === "Booted" || d.name.toLowerCase().includes("iphone") || d.name.toLowerCase().includes("ipad"))
+                .map(d => `\`${d.name}\` ${d.state === "Booted" ? "(booted)" : ""}`)
+                .slice(0, 10);
+              await respond(`:x: Simulator "${runSimName}" not found.\nAvailable:\n${available.join("\n")}`);
+              return;
+            }
+            if (match.state !== "Booted") {
+              await respond(`:iphone: Booting \`${match.name}\`...`);
+              execSync(`xcrun simctl boot "${match.udid}"`, { encoding: "utf8" });
+              execSync("open -a Simulator", { encoding: "utf8" });
+            }
+            runUdid = match.udid;
+            runSimDisplayName = match.name;
+          } else {
+            const booted = allDevices.find(d => d.state === "Booted");
+            if (!booted) {
+              await respond(":x: No booted simulator found. Specify one: `/cc run MyApp iPhone 16 Pro`\nOr boot one in Xcode first.");
+              return;
+            }
+            runUdid = booted.udid;
+            runSimDisplayName = booted.name;
+          }
+        } catch {
+          await respond(":x: Failed to list simulators. Is Xcode installed?");
+          return;
+        }
+
+        // Find the last built .app bundle via DerivedData info.plist (fast, <1s)
+        try {
+          const derivedDataRoot = join(homedir(), "Library/Developer/Xcode/DerivedData");
+          const workspacePath = join(runCwd, runWorkspace);
+          let appPath = "";
+
+          // Search DerivedData for the folder matching this workspace
+          const ddEntries = execSync(`ls "${derivedDataRoot}"`, { encoding: "utf8" }).trim().split("\n");
+          for (const entry of ddEntries) {
+            const infoPlist = join(derivedDataRoot, entry, "info.plist");
+            if (!existsSync(infoPlist)) continue;
+            try {
+              const wsPath = execSync(`plutil -extract WorkspacePath raw "${infoPlist}" 2>/dev/null`, { encoding: "utf8" }).trim();
+              if (wsPath === workspacePath) {
+                // Product name may differ from scheme (e.g. scheme "MyFitnessPal" → "mfpDebug.app")
+                // Find any .app in the products dir
+                const productsDir = join(derivedDataRoot, entry, "Build/Products/Debug-iphonesimulator");
+                try {
+                  const apps = execSync(`ls -d "${productsDir}"/*.app 2>/dev/null`, { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+                  if (apps.length > 0) {
+                    appPath = apps[0];
+                    break;
+                  }
+                } catch { /* no .app found */ }
+              }
+            } catch { /* skip entries without WorkspacePath */ }
+          }
+
+          if (!appPath) {
+            await respond(":x: No built app found. Run `/cc build` first.");
+            return;
+          }
+
+          await respond(`:rocket: Installing \`${runScheme}\` → \`${runSimDisplayName}\`...`);
+          execSync(`xcrun simctl install "${runUdid}" "${appPath}"`, { encoding: "utf8" });
+
+          // Try to extract bundle ID and launch
+          try {
+            const bundleId = execSync(
+              `defaults read "${appPath}/Info.plist" CFBundleIdentifier 2>/dev/null || plutil -extract CFBundleIdentifier raw "${appPath}/Info.plist" 2>/dev/null`,
+              { encoding: "utf8" }
+            ).trim();
+            if (bundleId) {
+              execSync(`xcrun simctl launch "${runUdid}" "${bundleId}"`, { encoding: "utf8" });
+              await app.client.chat.postMessage({ channel, text: `:white_check_mark: Launched \`${bundleId}\` on \`${runSimDisplayName}\`` });
+            } else {
+              await app.client.chat.postMessage({ channel, text: `:white_check_mark: Installed on \`${runSimDisplayName}\` — launch manually (couldn't detect bundle ID).` });
+            }
+          } catch {
+            await app.client.chat.postMessage({ channel, text: `:white_check_mark: Installed on \`${runSimDisplayName}\` — launch manually.` });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await respond(`:x: Run failed: ${msg}`);
+        }
+        break;
+      }
+
+      case "build": {
+        const state = getState(channel);
+        const cwd = state.cwd;
+
+        // Find .xcworkspace in cwd
+        let workspace: string;
+        try {
+          const found = execSync("find . -maxdepth 1 -name '*.xcworkspace' | head -1", { cwd, encoding: "utf8" }).trim();
+          if (!found) throw new Error("none found");
+          workspace = found.replace(/^\.\//, "");
+        } catch {
+          await respond(`:x: No \`.xcworkspace\` found in \`${cwd}\`. Use \`/cc cwd <path>\` to point to your Xcode project.`);
+          return;
+        }
+
+        // Use first arg as scheme, or fall back to workspace name
+        const scheme = args[1] ?? workspace.replace(/\.xcworkspace$/, "");
+
+        // Optional simulator name from remaining args (e.g. "/cc build MyApp iPhone 16 Pro")
+        const simName = args.length > 2 ? args.slice(2).join(" ") : null;
+
+        // Find simulator UDID — by name if specified, otherwise first booted
+        let udid: string;
+        let simDisplayName: string;
+        try {
+          const simList = execSync("xcrun simctl list devices --json", { encoding: "utf8" });
+          const json = JSON.parse(simList) as { devices: Record<string, { udid: string; name: string; state: string }[]> };
+          const allDevices = Object.values(json.devices).flat();
+
+          if (simName) {
+            // Find by name (case-insensitive)
+            const match = allDevices.find(d => d.name.toLowerCase() === simName.toLowerCase());
+            if (!match) {
+              const available = allDevices
+                .filter(d => d.state === "Booted" || d.name.toLowerCase().includes("iphone") || d.name.toLowerCase().includes("ipad"))
+                .map(d => `\`${d.name}\` ${d.state === "Booted" ? "(booted)" : ""}`)
+                .slice(0, 10);
+              await respond(`:x: Simulator "${simName}" not found.\nAvailable:\n${available.join("\n")}`);
+              return;
+            }
+            // Boot it if not already booted
+            if (match.state !== "Booted") {
+              await respond(`:iphone: Booting \`${match.name}\`...`);
+              execSync(`xcrun simctl boot "${match.udid}"`, { encoding: "utf8" });
+              execSync("open -a Simulator", { encoding: "utf8" });
+            }
+            udid = match.udid;
+            simDisplayName = match.name;
+          } else {
+            // Fall back to first booted simulator
+            const booted = allDevices.find(d => d.state === "Booted");
+            if (!booted) {
+              await respond(":x: No booted simulator found. Specify one: `/cc build MyApp iPhone 16 Pro`\nOr boot one in Xcode first.");
+              return;
+            }
+            udid = booted.udid;
+            simDisplayName = booted.name;
+          }
+        } catch {
+          await respond(":x: Failed to list simulators. Is Xcode installed?");
+          return;
+        }
+
+        await respond(`:hammer: Building \`${scheme}\`...\n_This may take a few minutes. I'll post when done._`);
+
+        const BUILD_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+        const buildStartTime = Date.now();
+
+        await new Promise<void>((resolvePromise) => {
+          let resolved = false;
+          const done = () => { if (!resolved) { resolved = true; resolvePromise(); } };
+
+          const proc = spawn(
+            "xcodebuild",
+            ["-workspace", workspace, "-scheme", scheme, "-destination", `id=${udid}`, "-configuration", "Debug", "build"],
+            { cwd, env: { ...process.env, NSUnbufferedIO: "YES" } }
+          );
+
+          const lines: string[] = [];
+          const onData = (data: Buffer) => lines.push(...data.toString().split("\n").filter(Boolean));
+          proc.stdout.on("data", onData);
+          proc.stderr.on("data", onData);
+
+          const buildTimeout = setTimeout(async () => {
+            proc.kill("SIGTERM");
+            await app.client.chat.postMessage({ channel, text: ":x: *BUILD TIMED OUT* (exceeded 10 minutes)" });
+            done();
+          }, BUILD_TIMEOUT_MS);
+
+          proc.on("error", async (err) => {
+            clearTimeout(buildTimeout);
+            await app.client.chat.postMessage({ channel, text: `:x: *BUILD FAILED TO START*: ${err.message}` });
+            done();
+          });
+
+          proc.on("close", async (code) => {
+            clearTimeout(buildTimeout);
+            const totalSec = Math.round((Date.now() - buildStartTime) / 1000);
+            const mins = Math.floor(totalSec / 60);
+            const secs = totalSec % 60;
+            const timeStr = mins > 0 ? `${mins} min ${secs} sec` : `${secs} sec`;
+            const succeeded = lines.some(l => l.includes("BUILD SUCCEEDED"));
+            const errors = lines.filter(l => /\berror:/.test(l) && !/warning/.test(l)).slice(0, 5);
+
+            if (succeeded) {
+              await app.client.chat.postMessage({ channel, text: `:white_check_mark: *BUILD SUCCEEDED* (${timeStr})` });
+            } else {
+              const errorBlock = errors.length ? `\n\`\`\`\n${errors.join("\n")}\n\`\`\`` : "";
+              const exitInfo = code !== null ? ` (exit code ${code})` : "";
+              await app.client.chat.postMessage({ channel, text: `:x: *BUILD FAILED*${exitInfo} (${timeStr})${errorBlock}` });
+            }
+            done();
+          });
+        });
+        break;
+      }
+
+      case "bitrise": {
+        const workflow = args[1];
+        if (!workflow) {
+          await respond("Usage: `/cc bitrise <workflow-id>`");
+          return;
+        }
+        const config = readConfig();
+        const token = config.bitriseToken;
+        const appSlug = config.bitriseAppSlug;
+        if (!token || !appSlug) {
+          await respond(":x: Bitrise not configured. Add `bitriseToken` and `bitriseAppSlug` to `~/.foreman/config.json`.");
+          return;
+        }
+        const state = getState(channel);
+        let branch: string;
+        try {
+          branch = execSync("git branch --show-current", { cwd: state.cwd, encoding: "utf8" }).trim();
+          if (!branch) throw new Error("detached HEAD or no branch");
+        } catch {
+          await respond(":x: Could not determine current git branch. Is the working directory a git repo?");
+          return;
+        }
+        await respond(`:bitrise: Triggering \`${workflow}\` on \`${branch}\`...`);
+        try {
+          const res = await fetch(`https://api.bitrise.io/v0.1/apps/${appSlug}/builds`, {
+            method: "POST",
+            headers: {
+              "Authorization": token,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              hook_info: { type: "bitrise" },
+              build_params: { branch, workflow_id: workflow },
+            }),
+          });
+          const json = await res.json() as Record<string, unknown>;
+          if (!res.ok || json.status !== "ok") {
+            await respond(`:x: Bitrise API error: ${JSON.stringify(json)}`);
+            return;
+          }
+          const buildUrl = json.build_url as string;
+          const buildNumber = json.build_number as number;
+          await respond(`:white_check_mark: Build *#${buildNumber}* triggered!\n• Workflow: \`${workflow}\`\n• Branch: \`${branch}\`\n• <${buildUrl}|View on Bitrise>`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await respond(`:x: Failed to trigger Bitrise build: ${msg}`);
+        }
+        break;
+      }
+
+      case "build": {
+        const config = readConfig();
+        const workspace = config.buildWorkspace;
+        const scheme = config.buildScheme;
+        const simulatorUDID = config.buildSimulatorUDID;
+        const bundleId = config.buildBundleId;
+
+        if (!workspace || !scheme || !simulatorUDID) {
+          await respond(
+            ":x: Build not configured. Add to `~/.foreman/config.json`:\n" +
+            "```\n" +
+            "{\n" +
+            '  "buildWorkspace": "/path/to/App.xcworkspace",\n' +
+            '  "buildScheme": "MyScheme",\n' +
+            '  "buildSimulatorUDID": "SIMULATOR-UDID",\n' +
+            '  "buildBundleId": "com.example.app"\n' +
+            "}\n" +
+            "```"
+          );
+          return;
+        }
+
+        await respond(`:hammer: Building \`${scheme}\`...`);
+
+        try {
+          // Step 1: xcodebuild
+          await new Promise<void>((resolve, reject) => {
+            const workspaceFlag = workspace.endsWith(".xcworkspace") ? "-workspace" : "-project";
+            const proc = spawn("xcodebuild", [
+              workspaceFlag, workspace,
+              "-scheme", scheme,
+              "-destination", `id=${simulatorUDID}`,
+              "-configuration", "Debug",
+              "build",
+            ]);
+            let stderr = "";
+            proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+            proc.on("close", (code) => {
+              if (code === 0) resolve();
+              else reject(new Error(`xcodebuild exited ${code}\n${stderr.slice(-500)}`));
+            });
+          });
+
+          await app.client.chat.postMessage({ channel, text: ":white_check_mark: Build succeeded! Installing..." });
+
+          // Step 2: find built .app
+          const appPath = execSync(
+            `xcodebuild -workspace "${workspace}" -scheme "${scheme}" -destination "id=${simulatorUDID}" -configuration Debug -showBuildSettings 2>/dev/null | grep CODESIGNING_FOLDER_PATH | head -1 | awk '{print $3}'`,
+            { encoding: "utf8" }
+          ).trim();
+
+          if (!appPath || !existsSync(appPath)) {
+            await app.client.chat.postMessage({ channel, text: ":x: Build succeeded but could not locate .app bundle." });
+            return;
+          }
+
+          // Step 3: boot simulator if needed
+          const simState = execSync(`xcrun simctl list devices 2>/dev/null | grep "${simulatorUDID}"`, { encoding: "utf8" });
+          if (!simState.includes("Booted")) {
+            await app.client.chat.postMessage({ channel, text: ":iphone: Booting simulator..." });
+            execSync(`xcrun simctl boot "${simulatorUDID}"`);
+            execSync("open -a Simulator");
+          }
+
+          // Step 4: install + launch
+          execSync(`xcrun simctl install "${simulatorUDID}" "${appPath}"`);
+          if (bundleId) {
+            execSync(`xcrun simctl launch "${simulatorUDID}" "${bundleId}"`);
+            await app.client.chat.postMessage({ channel, text: `:rocket: Launched \`${bundleId}\` in simulator!` });
+          } else {
+            await app.client.chat.postMessage({ channel, text: ":rocket: App installed in simulator! (No bundle ID configured — launch manually.)" });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await app.client.chat.postMessage({ channel, text: `:x: Build failed:\n\`\`\`\n${msg.slice(0, 1000)}\n\`\`\`` });
+        }
         break;
       }
 
@@ -321,7 +1046,18 @@ export function registerHandlers(app: App, botUserId: string): void {
             "• `/cc plugin <name-or-path>` — load a plugin (or list loaded plugins)",
             "• `/cc stop` — cancel active query",
             "• `/cc session` — show session info",
+            "• `/cc canvas read` — load canvas, summarize, and start clarifying Q&A",
+            "• `/cc canvas write` — generate and save acceptance criteria to canvas",
+            "• `/cc spec` — process canvas: ask questions, then write tech spec + Gherkin AC",
+            "• `/cc implement` — read canvas spec + wireframes, explore codebase, write Swift code",
+            "• `/cc dispatch #ch1 #ch2 [message]` — broadcast a message to one or more channels",
             "• `/cc new` — start fresh session (resets model, clears plugins)",
+            "• `/cc commit <message>` — stage all changes and commit with the given message",
+            "• `/cc push` — push the current branch to origin",
+            "• `/cc run [scheme] [simulator]` — install + launch the last built app (skips build)",
+            "• `/cc build [scheme] [simulator]` — build the Xcode project and target a simulator",
+            "• `/cc bitrise <workflow>` — trigger a Bitrise workflow on the current git branch",
+            "• `/cc build` — build the iOS app and launch in simulator",
             "• `/cc reboot` — restart Foreman",
           ].join("\n")
         );
@@ -337,6 +1073,16 @@ export function registerHandlers(app: App, botUserId: string): void {
 
     const state = getState(channelId);
     if (state.pendingApproval) {
+      const tapUser = body.user?.id;
+      if (state.pendingApproval.requesterId && tapUser !== state.pendingApproval.requesterId) {
+        await client.chat.postEphemeral({
+          channel: channelId,
+          user: tapUser!,
+          text: `:lock: Only <@${state.pendingApproval.requesterId}> can approve this tool call.`,
+        });
+        return;
+      }
+
       const toolName = state.pendingApproval.toolName;
       state.pendingApproval.resolve({ approved: true });
       setPendingApproval(channelId, null);
@@ -360,6 +1106,16 @@ export function registerHandlers(app: App, botUserId: string): void {
 
     const state = getState(channelId);
     if (state.pendingApproval) {
+      const tapUser = body.user?.id;
+      if (state.pendingApproval.requesterId && tapUser !== state.pendingApproval.requesterId) {
+        await client.chat.postEphemeral({
+          channel: channelId,
+          user: tapUser!,
+          text: `:lock: Only <@${state.pendingApproval.requesterId}> can deny this tool call.`,
+        });
+        return;
+      }
+
       const toolName = state.pendingApproval.toolName;
       state.pendingApproval.resolve({ approved: false });
       setPendingApproval(channelId, null);

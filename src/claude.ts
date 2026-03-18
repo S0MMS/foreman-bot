@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type McpSdkServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { ApprovalResult } from "./types.js";
 import { AUTO_APPROVE_TOOLS } from "./types.js";
 import {
@@ -31,6 +31,17 @@ function buildPluginsOption(channelId: string): { type: "local"; path: string }[
 }
 
 /**
+ * Build the prompt string, appending image file paths when present.
+ * Claude Code will read the files using its Read tool (auto-approved).
+ */
+function buildPrompt(text: string, imagePaths: string[]): string {
+  if (imagePaths.length === 0) return text;
+  const note = `Please use the Read tool to view the following image(s) before responding:\n` +
+    imagePaths.map((p) => `- ${p}`).join("\n");
+  return text ? `${text}\n\n${note}` : note;
+}
+
+/**
  * Start a new Claude session with the given prompt.
  */
 export async function startSession(
@@ -39,16 +50,20 @@ export async function startSession(
   cwd: string,
   name: string,
   onApprovalNeeded: OnApprovalNeeded,
-  onProgress?: OnProgress
+  onProgress?: OnProgress,
+  imagePaths?: string[],
+  mcpServer?: McpSdkServerConfig & { instance: any }
 ): Promise<QueryResult> {
   const abortController = new AbortController();
   setAbortController(channelId, abortController);
   setRunning(channelId, true);
 
+  const stderrLines: string[] = [];
+
   try {
     const state = getState(channelId);
     const q = query({
-      prompt,
+      prompt: buildPrompt(prompt, imagePaths || []),
       options: {
         model: state.model,
         cwd,
@@ -59,15 +74,22 @@ export async function startSession(
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: `The user communicates with you remotely via a Slack bridge called Foreman. Your name in this channel is ${name}. Introduce yourself as ${name} when relevant.`,
+          append: `The user communicates with you remotely via a Slack bridge called Foreman. Your name in this channel is ${name}. Introduce yourself as ${name} when relevant. You have two canvas tools available: CanvasRead (reads this channel's Slack canvas) and CanvasWrite (writes markdown content to the canvas). Use these tools naturally when the user asks you to interact with the canvas. Never attempt to find or modify the Foreman codebase yourself.`,
         },
         canUseTool: createCanUseTool(onApprovalNeeded),
+        mcpServers: mcpServer ? { "foreman-canvas": mcpServer as any } : undefined,
         hooks: onProgress ? { PreToolUse: buildProgressHooks(onProgress) } : undefined,
-        stderr: (data: string) => console.error("[claude stderr]", data),
+        stderr: (data: string) => {
+          console.error("[claude stderr]", data);
+          stderrLines.push(data.trim());
+        },
       },
     });
 
     return await collectMessages(channelId, q);
+  } catch (err) {
+    const detail = stderrLines.length > 0 ? `\nstderr: ${stderrLines.slice(-3).join(" | ")}` : "";
+    throw new Error(`${err instanceof Error ? err.message : String(err)}${detail}`);
   } finally {
     setRunning(channelId, false);
   }
@@ -83,16 +105,20 @@ export async function resumeSession(
   cwd: string,
   name: string,
   onApprovalNeeded: OnApprovalNeeded,
-  onProgress?: OnProgress
+  onProgress?: OnProgress,
+  imagePaths?: string[],
+  mcpServer?: McpSdkServerConfig & { instance: any }
 ): Promise<QueryResult> {
   const abortController = new AbortController();
   setAbortController(channelId, abortController);
   setRunning(channelId, true);
 
+  const stderrLines: string[] = [];
+
   try {
     const state = getState(channelId);
     const q = query({
-      prompt,
+      prompt: buildPrompt(prompt, imagePaths || []),
       options: {
         model: state.model,
         resume: sessionId,
@@ -104,15 +130,22 @@ export async function resumeSession(
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: `The user communicates with you remotely via a Slack bridge called Foreman. Your name in this channel is ${name}. Introduce yourself as ${name} when relevant.`,
+          append: `The user communicates with you remotely via a Slack bridge called Foreman. Your name in this channel is ${name}. Introduce yourself as ${name} when relevant. You have two canvas tools available: CanvasRead (reads this channel's Slack canvas) and CanvasWrite (writes markdown content to the canvas). Use these tools naturally when the user asks you to interact with the canvas. Never attempt to find or modify the Foreman codebase yourself.`,
         },
         canUseTool: createCanUseTool(onApprovalNeeded),
+        mcpServers: mcpServer ? { "foreman-canvas": mcpServer as any } : undefined,
         hooks: onProgress ? { PreToolUse: buildProgressHooks(onProgress) } : undefined,
-        stderr: (data: string) => console.error("[claude stderr]", data),
+        stderr: (data: string) => {
+          console.error("[claude stderr]", data);
+          stderrLines.push(data.trim());
+        },
       },
     });
 
     return await collectMessages(channelId, q);
+  } catch (err) {
+    const detail = stderrLines.length > 0 ? `\nstderr: ${stderrLines.slice(-3).join(" | ")}` : "";
+    throw new Error(`${err instanceof Error ? err.message : String(err)}${detail}`);
   } finally {
     setRunning(channelId, false);
   }
@@ -140,7 +173,8 @@ function createCanUseTool(onApprovalNeeded: OnApprovalNeeded) {
     | { behavior: "allow"; updatedInput?: Record<string, unknown> }
     | { behavior: "deny"; message: string }
   > => {
-    if (AUTO_APPROVE_TOOLS.has(toolName)) {
+    const baseName = toolName.replace(/^mcp__[^_]+__/, "");
+    if (AUTO_APPROVE_TOOLS.has(toolName) || AUTO_APPROVE_TOOLS.has(baseName)) {
       return { behavior: "allow", updatedInput: input };
     }
 

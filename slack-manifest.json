@@ -13,7 +13,7 @@
       {
         "command": "/cc",
         "description": "Control your Foreman session",
-        "usage_hint": "[cwd|model|name|plugin|stop|session|new|reboot] [args]",
+        "usage_hint": "[cwd|model|name|plugin|stop|session|canvas|new|reboot] [args]",
         "should_escape": false
       }
     ]
@@ -21,9 +21,12 @@
   "oauth_config": {
     "scopes": {
       "bot": [
+        "canvases:read",
+        "canvases:write",
         "channels:history",
         "channels:read",
         "chat:write",
+        "files:read",
         "groups:history",
         "groups:read",
         "im:history",

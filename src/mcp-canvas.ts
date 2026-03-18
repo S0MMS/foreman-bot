@@ -1,0 +1,659 @@
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+import { writeFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+import type { App } from "@slack/bolt";
+import { fetchChannelCanvas, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
+import { getState, setCanvasFileId } from "./session.js";
+import { createJiraIssue, readJiraIssue, updateJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, getJiraProjectKey, getJiraHost } from "./jira.js";
+import { readConfluencePage, searchConfluencePages, createConfluencePage, updateConfluencePage } from "./confluence.js";
+import { createPR, readPR, readPRComments, readIssue, searchGitHub, listPRs } from "./github.js";
+
+/**
+ * Create an in-process MCP server that exposes CRUD canvas tools with provenance tracking.
+ * Each bot tags its headings with *[bot-name] Heading* so multiple bots can coexist.
+ */
+export function createCanvasMcpServer(channelId: string, app: App) {
+  const getBotName = () => getState(channelId).name ?? "Foreman";
+
+  return createSdkMcpServer({
+    name: "foreman-canvas",
+    tools: [
+      tool(
+        "CanvasRead",
+        "Read the full content of this Slack channel's canvas. Returns the canvas content as markdown text. " +
+        "Sections created by bots are tagged with *[bot-name] Heading* format. " +
+        "Sections without a tag were created by humans. Use this to understand the canvas before making changes.",
+        {},
+        async () => {
+          try {
+            const canvas = await fetchChannelCanvas(app, channelId);
+            if (!canvas) {
+              return { content: [{ type: "text" as const, text: "No canvas found for this channel." }] };
+            }
+            setCanvasFileId(channelId, canvas.fileId);
+
+            // Annotate the content with ownership info
+            const botName = getBotName();
+            const lines = canvas.content.split("\n");
+            const annotations: string[] = [];
+            for (const line of lines) {
+              const owner = getOwner(line);
+              if (owner === botName) {
+                annotations.push(`${line}  ← (yours)`);
+              } else if (owner) {
+                annotations.push(`${line}  ← (by ${owner})`);
+              } else {
+                annotations.push(line);
+              }
+            }
+            const annotatedContent = annotations.join("\n");
+
+            const content: any[] = [{ type: "text" as const, text: annotatedContent }];
+            for (const img of canvas.images) {
+              content.push({ type: "image" as const, data: img.data, mimeType: img.mimeType });
+            }
+            return { content };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading canvas: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasCreate",
+        "Append new content to the end of this Slack channel's canvas. Use this when the user asks you to add or create new content. " +
+        "Your headings will be automatically tagged with your bot name so they can be identified later. " +
+        "Always start new sections with a heading (## Heading) so they can be updated or deleted later.",
+        { markdown: z.string().describe("The markdown content to append. Should start with a heading (e.g. ## Section Title).") },
+        async ({ markdown }) => {
+          try {
+            const state = getState(channelId);
+            if (!state.canvasFileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            }
+            await appendCanvasContent(app, state.canvasFileId, markdown, getBotName());
+            return { content: [{ type: "text" as const, text: "Content appended to canvas successfully." }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error appending to canvas: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasUpdate",
+        "Update a specific section of this Slack channel's canvas. Finds the section by its heading text and replaces it. " +
+        "Call CanvasRead first to see the current sections and their ownership. " +
+        "If multiple sections match, the first is replaced and duplicates are deleted. " +
+        "The updated section will be tagged with your bot name.",
+        {
+          sectionHeading: z.string().describe("The heading text of the section to update (e.g. 'Acceptance Criteria'). Must match an existing heading."),
+          markdown: z.string().describe("The complete new markdown content for this section, including the heading (e.g. '## Acceptance Criteria\\n- criterion 1')."),
+        },
+        async ({ sectionHeading, markdown }) => {
+          try {
+            const state = getState(channelId);
+            if (!state.canvasFileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            }
+            const result = await updateCanvasSection(app, state.canvasFileId, sectionHeading, markdown, getBotName());
+            if (!result.found) {
+              return { content: [{ type: "text" as const, text: result.reason || `No section found matching "${sectionHeading}". Call CanvasRead to see the current canvas sections.` }] };
+            }
+            return { content: [{ type: "text" as const, text: `Section "${sectionHeading}" updated successfully.` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error updating canvas section: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasDelete",
+        "Delete a specific section from this Slack channel's canvas. Finds the section by its heading text and removes it. " +
+        "Call CanvasRead first to see what sections exist. " +
+        "If multiple sections match the heading text, all matching sections are deleted.",
+        {
+          sectionHeading: z.string().describe("The heading text of the section to delete (e.g. 'Acceptance Criteria'). All matching sections will be deleted."),
+        },
+        async ({ sectionHeading }) => {
+          try {
+            const state = getState(channelId);
+            if (!state.canvasFileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            }
+            const count = await deleteCanvasSection(app, state.canvasFileId, sectionHeading, getBotName());
+            if (count === 0) {
+              return { content: [{ type: "text" as const, text: `No section found matching "${sectionHeading}". Call CanvasRead to see the current canvas sections.` }] };
+            }
+            return { content: [{ type: "text" as const, text: `Deleted ${count} section(s) matching "${sectionHeading}".` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error deleting canvas section: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasReadById",
+        "Read the content of a specific element in the canvas by its raw ID. Use this to inspect a single element " +
+        "without loading the full canvas. Call CanvasRead first to find the element IDs in the raw HTML.",
+        {
+          sectionId: z.string().describe("The raw element ID from the canvas HTML (e.g. 'temp:C:FOdc2dcdb8ec57146dd9cfcb84f3')."),
+        },
+        async ({ sectionId }) => {
+          try {
+            const canvas = await fetchChannelCanvas(app, channelId);
+            if (!canvas) {
+              return { content: [{ type: "text" as const, text: "No canvas found for this channel." }] };
+            }
+            setCanvasFileId(channelId, canvas.fileId);
+            const text = readCanvasById(canvas.content, sectionId);
+            if (text === null) {
+              return { content: [{ type: "text" as const, text: `No element found with ID "${sectionId}".` }] };
+            }
+            return { content: [{ type: "text" as const, text }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading element: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasUpdateById",
+        "Update a specific element in the canvas by its raw ID. Use this when CanvasUpdate can't target the content " +
+        "(e.g. paragraphs without headings). Call CanvasRead first — the IDs appear in the raw HTML as id='temp:C:FOd...' attributes.",
+        {
+          sectionId: z.string().describe("The raw element ID from the canvas HTML (e.g. 'temp:C:FOdc2dcdb8ec57146dd9cfcb84f3')."),
+          markdown: z.string().describe("The new markdown content to replace the element with."),
+        },
+        async ({ sectionId, markdown }) => {
+          try {
+            const state = getState(channelId);
+            if (!state.canvasFileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            }
+            await updateCanvasById(app, state.canvasFileId, sectionId, markdown, getBotName());
+            return { content: [{ type: "text" as const, text: `Updated element ${sectionId}.` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error updating element: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasDeleteById",
+        "Delete a specific element from the canvas by its raw ID. Use this when CanvasDelete can't target the content " +
+        "(e.g. paragraphs without headings, orphaned text, code blocks). Call CanvasRead first — the IDs appear in the " +
+        "raw HTML as id='temp:C:FOd...' attributes. You can delete multiple elements by calling this tool multiple times.",
+        {
+          sectionId: z.string().describe("The raw element ID from the canvas HTML (e.g. 'temp:C:FOdc2dcdb8ec57146dd9cfcb84f3')."),
+        },
+        async ({ sectionId }) => {
+          try {
+            const state = getState(channelId);
+            if (!state.canvasFileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            }
+            await deleteCanvasById(app, state.canvasFileId, sectionId);
+            return { content: [{ type: "text" as const, text: `Deleted element ${sectionId}.` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error deleting element: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "SelfReboot",
+        "Reboot the Foreman process. This kills the current process and launchd restarts it automatically. " +
+        "ONLY available from DM channels — will refuse if called from a public/private channel. " +
+        "Use this when the user asks you to reboot yourself. The bot will post a confirmation message after restarting.",
+        {},
+        async () => {
+          // Only allow from DM channels
+          if (!channelId.startsWith("D")) {
+            return { content: [{ type: "text" as const, text: "SelfReboot is only available from the DM channel." }] };
+          }
+
+          try {
+            // Write a marker file so the process knows to post a confirmation after restart
+            const markerPath = join(homedir(), ".foreman", "reboot-channel.txt");
+            writeFileSync(markerPath, channelId, "utf-8");
+
+            // Schedule the exit to give time for the response to be sent
+            setTimeout(() => {
+              console.log("SelfReboot requested — exiting for restart");
+              process.exit(0);
+            }, 2000);
+
+            return { content: [{ type: "text" as const, text: "Rebooting now... I'll be right back." }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error initiating reboot: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "DiagramCreate",
+        "Generate a diagram from Mermaid syntax and post it as an image in the Slack channel. " +
+        "Use this when the user asks for architecture diagrams, flowcharts, sequence diagrams, entity relationship diagrams, etc. " +
+        "Write valid Mermaid syntax — it will be rendered to a PNG and uploaded to the channel.",
+        {
+          mermaid: z.string().describe("Valid Mermaid diagram syntax (e.g. 'graph TD\\nA-->B')"),
+          title: z.string().optional().describe("Optional title for the diagram, used as the file name"),
+        },
+        async ({ mermaid: mermaidSyntax, title }) => {
+          try {
+            // Encode the Mermaid syntax for the mermaid.ink API
+            const encoded = Buffer.from(mermaidSyntax).toString("base64url");
+            const url = `https://mermaid.ink/img/${encoded}?type=png&bgColor=white`;
+
+            const res = await fetch(url);
+            if (!res.ok) {
+              return { content: [{ type: "text" as const, text: `Mermaid rendering failed: HTTP ${res.status}. Check your Mermaid syntax.` }] };
+            }
+
+            const imageBuffer = Buffer.from(await res.arrayBuffer());
+            const fileName = `${(title || "diagram").replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
+
+            // Upload to Slack channel
+            await app.client.filesUploadV2({
+              channel_id: channelId,
+              file: imageBuffer,
+              filename: fileName,
+              title: title || "Diagram",
+            });
+
+            return { content: [{ type: "text" as const, text: `Diagram "${title || "diagram"}" generated and posted to the channel.` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error creating diagram: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraCreateTicket",
+        "Create a Jira ticket in the configured project. Use this when the user asks to create a Jira ticket, story, task, or bug. " +
+        "You can generate the summary and description from canvas content, conversation context, or user instructions.",
+        {
+          summary: z.string().describe("The ticket title/summary"),
+          description: z.string().describe("The ticket description in markdown format. Supports headings, bullet lists, and paragraphs."),
+          issueType: z.string().optional().describe("Issue type: Task, Story, Bug, Epic. Defaults to Task."),
+          labels: z.array(z.string()).optional().describe("Optional labels to apply"),
+          priority: z.string().optional().describe("Priority: Highest, High, Medium, Low, Lowest"),
+        },
+        async ({ summary, description, issueType, labels, priority }) => {
+          try {
+            const result = await createJiraIssue({ summary, description, issueType, labels, priority });
+            return { content: [{ type: "text" as const, text: `Created ${result.key}: ${result.url}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error creating Jira ticket: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraUpdateTicket",
+        "Update an existing Jira ticket. Use this to change the summary, description, priority, or labels of a ticket. " +
+        "Only the fields you provide will be updated — others remain unchanged.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. POW-123)"),
+          summary: z.string().optional().describe("New ticket title/summary"),
+          description: z.string().optional().describe("New description in markdown format"),
+          priority: z.string().optional().describe("New priority: Highest, High, Medium, Low, Lowest"),
+          labels: z.array(z.string()).optional().describe("New labels (replaces existing labels)"),
+        },
+        async ({ issueKey, summary, description, priority, labels }) => {
+          try {
+            const result = await updateJiraIssue(issueKey, { summary, description, priority, labels });
+            return { content: [{ type: "text" as const, text: `Updated ${result.key}: ${result.url}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error updating Jira ticket: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraReadTicket",
+        "Read the details of a specific Jira ticket by its key (e.g. POW-123). " +
+        "Returns the summary, status, assignee, description, type, priority, labels, and comments.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. POW-123)"),
+        },
+        async ({ issueKey }) => {
+          try {
+            const issue = await readJiraIssue(issueKey);
+            const lines = [
+              `**${issue.key}**: ${issue.summary}`,
+              `**Type**: ${issue.issueType} | **Status**: ${issue.status} | **Priority**: ${issue.priority}`,
+              issue.assignee ? `**Assignee**: ${issue.assignee}` : "**Assignee**: Unassigned",
+              issue.labels.length > 0 ? `**Labels**: ${issue.labels.join(", ")}` : "",
+              "",
+              issue.description || "(no description)",
+            ].filter(Boolean);
+            if (issue.comments.length > 0) {
+              lines.push("", "---", "**Comments:**");
+              for (const c of issue.comments) {
+                const date = new Date(c.created).toLocaleDateString();
+                lines.push(`\n**${c.author}** (${date}) [id: ${c.id}]:\n${c.body}`);
+              }
+            }
+            return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading Jira ticket: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraSearch",
+        "Search Jira tickets using JQL (Jira Query Language). Use this to find tickets by status, assignee, sprint, labels, etc. " +
+        `The configured project key is available for queries (e.g. 'project = ${(() => { try { return getJiraProjectKey(); } catch { return "PROJ"; } })()}').`,
+        {
+          jql: z.string().describe("JQL query string (e.g. 'project = POW AND status = \"In Progress\"')"),
+          maxResults: z.number().optional().describe("Max results to return (default 10, max 50)"),
+        },
+        async ({ jql, maxResults }) => {
+          try {
+            const issues = await searchJiraIssues(jql, Math.min(maxResults || 10, 50));
+            if (issues.length === 0) {
+              return { content: [{ type: "text" as const, text: "No tickets found matching that query." }] };
+            }
+            const lines = issues.map(
+              (i) => `**${i.key}** [${i.status}] ${i.summary} (${i.issueType}, ${i.priority}${i.assignee ? `, ${i.assignee}` : ""})`
+            );
+            return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error searching Jira: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraAddComment",
+        "Add a comment to a Jira ticket.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. POW-123)"),
+          body: z.string().describe("Comment text in markdown format"),
+        },
+        async ({ issueKey, body }) => {
+          try {
+            const result = await addJiraComment(issueKey, body);
+            const host = getJiraHost();
+            return { content: [{ type: "text" as const, text: `Comment added to ${issueKey} (comment id: ${result.id})\n${host}/browse/${issueKey}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error adding comment: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraUpdateComment",
+        "Update an existing comment on a Jira ticket. Requires the comment ID (visible when reading a ticket).",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. POW-123)"),
+          commentId: z.string().describe("The comment ID to update"),
+          body: z.string().describe("New comment text in markdown format"),
+        },
+        async ({ issueKey, commentId, body }) => {
+          try {
+            await updateJiraComment(issueKey, commentId, body);
+            return { content: [{ type: "text" as const, text: `Comment ${commentId} updated on ${issueKey}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error updating comment: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraDeleteComment",
+        "Delete a comment from a Jira ticket. Requires the comment ID (visible when reading a ticket).",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. POW-123)"),
+          commentId: z.string().describe("The comment ID to delete"),
+        },
+        async ({ issueKey, commentId }) => {
+          try {
+            await deleteJiraComment(issueKey, commentId);
+            return { content: [{ type: "text" as const, text: `Comment ${commentId} deleted from ${issueKey}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error deleting comment: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "ConfluenceReadPage",
+        "Read a Confluence page by its page ID. Returns the title, body content, and URL. " +
+        "Use this when the user asks to read or reference a Confluence page.",
+        {
+          pageId: z.string().describe("The Confluence page ID (numeric string)"),
+        },
+        async ({ pageId }) => {
+          try {
+            const page = await readConfluencePage(pageId);
+            const lines = [
+              `**${page.title}**`,
+              `Status: ${page.status} | Version: ${page.version}`,
+              `URL: ${page.url}`,
+              "",
+              page.body || "(empty page)",
+            ];
+            return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading Confluence page: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "ConfluenceSearch",
+        "Search Confluence pages using CQL (Confluence Query Language). " +
+        "Examples: 'title = \"My Page\"', 'text ~ \"acceptance criteria\"', 'space = POW AND type = page'.",
+        {
+          cql: z.string().describe("CQL query string (e.g. 'title ~ \"design doc\"')"),
+          maxResults: z.number().optional().describe("Max results to return (default 10)"),
+        },
+        async ({ cql, maxResults }) => {
+          try {
+            const pages = await searchConfluencePages(cql, Math.min(maxResults || 10, 25));
+            if (pages.length === 0) {
+              return { content: [{ type: "text" as const, text: "No pages found matching that query." }] };
+            }
+            const lines = pages.map(
+              (p) => `**${p.title}** (ID: ${p.id}) — ${p.url}\n${p.body ? p.body.substring(0, 150) + "..." : "(no excerpt)"}`
+            );
+            return { content: [{ type: "text" as const, text: lines.join("\n\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error searching Confluence: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "ConfluenceCreatePage",
+        "Create a new Confluence page. Requires a space ID and title. " +
+        "Use ConfluenceSearch to find the space ID if needed (search for an existing page in the space).",
+        {
+          title: z.string().describe("The page title"),
+          body: z.string().describe("The page body in markdown format"),
+          spaceId: z.string().describe("The Confluence space ID (numeric string)"),
+          parentId: z.string().optional().describe("Optional parent page ID to nest under"),
+        },
+        async ({ title, body, spaceId, parentId }) => {
+          try {
+            const result = await createConfluencePage({ title, body, spaceId, parentId });
+            return { content: [{ type: "text" as const, text: `Created page: ${result.url}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error creating Confluence page: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "ConfluenceUpdatePage",
+        "Update an existing Confluence page. Only the fields you provide will be changed. " +
+        "Automatically increments the version number.",
+        {
+          pageId: z.string().describe("The Confluence page ID (numeric string)"),
+          title: z.string().optional().describe("New page title"),
+          body: z.string().optional().describe("New page body in markdown format"),
+        },
+        async ({ pageId, title, body }) => {
+          try {
+            const result = await updateConfluencePage(pageId, { title, body });
+            return { content: [{ type: "text" as const, text: `Updated page: ${result.url}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error updating Confluence page: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "GitHubCreatePR",
+        "Create a GitHub pull request from the current branch. Requires the branch to be pushed to origin first.",
+        {
+          title: z.string().describe("PR title"),
+          body: z.string().describe("PR description/body in markdown"),
+          base: z.string().optional().describe("Base branch (defaults to repo default branch)"),
+          draft: z.boolean().optional().describe("Create as draft PR"),
+        },
+        async ({ title, body, base, draft }) => {
+          try {
+            const cwd = getState(channelId).cwd;
+            const result = createPR({ title, body, base, draft }, cwd);
+            return { content: [{ type: "text" as const, text: `Created PR #${result.number}: ${result.url}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error creating PR: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "GitHubReadPR",
+        "Read details of a GitHub pull request including title, state, author, branch, and body. " +
+        "Optionally includes comments.",
+        {
+          prNumber: z.number().describe("The PR number"),
+          includeComments: z.boolean().optional().describe("Include PR comments (default false)"),
+        },
+        async ({ prNumber, includeComments }) => {
+          try {
+            const cwd = getState(channelId).cwd;
+            const pr = readPR(prNumber, cwd);
+            const lines = [
+              `**PR #${pr.number}: ${pr.title}**`,
+              `State: ${pr.state} | Author: ${pr.author} | Branch: ${pr.branch}`,
+              `URL: ${pr.url}`,
+              "",
+              pr.body || "(no description)",
+            ];
+            if (includeComments) {
+              lines.push("", "---", "**Comments:**", "", readPRComments(prNumber, cwd));
+            }
+            return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading PR: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "GitHubReadIssue",
+        "Read details of a GitHub issue including title, state, author, labels, and body.",
+        {
+          issueNumber: z.number().describe("The issue number"),
+        },
+        async ({ issueNumber }) => {
+          try {
+            const cwd = getState(channelId).cwd;
+            const issue = readIssue(issueNumber, cwd);
+            const lines = [
+              `**#${issue.number}: ${issue.title}**`,
+              `State: ${issue.state} | Author: ${issue.author}`,
+              issue.labels.length > 0 ? `Labels: ${issue.labels.join(", ")}` : "",
+              `URL: ${issue.url}`,
+              "",
+              issue.body || "(no description)",
+            ].filter(Boolean);
+            return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading issue: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "GitHubSearch",
+        "Search GitHub issues and pull requests. Uses GitHub's search syntax.",
+        {
+          query: z.string().describe("Search query (e.g. 'is:pr is:open author:username', 'label:bug is:open')"),
+        },
+        async ({ query }) => {
+          try {
+            const cwd = getState(channelId).cwd;
+            const json = searchGitHub(query, cwd);
+            const results = JSON.parse(json);
+            if (results.length === 0) {
+              return { content: [{ type: "text" as const, text: "No results found." }] };
+            }
+            const lines = results.map((r: any) =>
+              `**#${r.number}** [${r.state}] ${r.title}\n${r.url}`
+            );
+            return { content: [{ type: "text" as const, text: lines.join("\n\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error searching GitHub: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "GitHubListPRs",
+        "List pull requests for the current repository.",
+        {
+          state: z.string().optional().describe("PR state: open, closed, merged, all (default: open)"),
+        },
+        async ({ state }) => {
+          try {
+            const cwd = getState(channelId).cwd;
+            const prs = listPRs(cwd, state || "open");
+            if (prs.length === 0) {
+              return { content: [{ type: "text" as const, text: `No ${state || "open"} PRs found.` }] };
+            }
+            const lines = prs.map(
+              (pr) => `**#${pr.number}** [${pr.state}] ${pr.title} (${pr.author}, ${pr.branch})\n${pr.url}`
+            );
+            return { content: [{ type: "text" as const, text: lines.join("\n\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error listing PRs: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+    ],
+  });
+}
