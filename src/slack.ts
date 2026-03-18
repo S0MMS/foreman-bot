@@ -589,10 +589,13 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           const mentionMatch = arg.match(/<#([A-Z0-9]+)/);
           if (mentionMatch) { channelArgs.push(mentionMatch[1]); msgStartIdx = i + 1; continue; }
           if (/^[A-Z0-9]{8,}$/.test(arg)) { channelArgs.push(arg); msgStartIdx = i + 1; continue; }
-          const channelName = arg.replace(/^#/, "");
-          const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
-          const found = (listRes.channels || []).find((c: any) => c.name === channelName);
-          if (found?.id) { channelArgs.push(found.id); msgStartIdx = i + 1; continue; }
+          // Resolve "#channel-name" (with explicit # prefix only — plain words are message text)
+          if (arg.startsWith("#")) {
+            const channelName = arg.slice(1);
+            const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+            const found = (listRes.channels || []).find((c: any) => c.name === channelName);
+            if (found?.id) { channelArgs.push(found.id); msgStartIdx = i + 1; continue; }
+          }
           break; // first non-channel arg starts the message
         }
 
@@ -603,8 +606,16 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
 
         const dispatchMsg = args.slice(msgStartIdx).join(" ") || "implement feature";
 
+        // Guard: skip dispatching to own channel (infinite loop prevention)
+        const selfSkipped = channelArgs.filter(id => id === channel);
+        const filteredChannels = channelArgs.filter(id => id !== channel);
+        if (selfSkipped.length > 0) {
+          await respond(":warning: Skipped dispatch to own channel (infinite loop prevention).");
+        }
+        if (filteredChannels.length === 0) return;
+
         let sent = 0;
-        for (const workerId of channelArgs) {
+        for (const workerId of filteredChannels) {
           try {
             // Post the message visibly in the worker channel
             await app.client.chat.postMessage({ channel: workerId, text: dispatchMsg });
@@ -673,8 +684,8 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
-      case "run": {
-        // Install + launch the last built app on a simulator (skips xcodebuild)
+      case "launch-ios": {
+        // Install + launch the last built iOS app on a simulator (skips xcodebuild)
         const runState = getState(channel);
         const runCwd = runState.cwd;
 
@@ -720,7 +731,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           } else {
             const booted = allDevices.find(d => d.state === "Booted");
             if (!booted) {
-              await respond(":x: No booted simulator found. Specify one: `/cc run MyApp iPhone 16 Pro`\nOr boot one in Xcode first.");
+              await respond(":x: No booted simulator found. Specify one: `/cc launch-ios MyApp iPhone 16 Pro`\nOr boot one in Xcode first.");
               return;
             }
             runUdid = booted.udid;
@@ -785,6 +796,96 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await respond(`:x: Run failed: ${msg}`);
+        }
+        break;
+      }
+
+      case "launch-android": {
+        // Install + launch Android app using gradlew install + adb am start
+        // Usage: /cc launch-android [variant] [package/activity]
+        // Defaults: variant=BetaDebug, activity=com.myfitnesspal.android/.splash.SplashActivity
+        const androidState = getState(channel);
+        const androidCwd = androidState.cwd;
+
+        const variant = args[1] || "BetaDebug";
+        const activityArg = args[2] || null;
+
+        // Resolve adb
+        const adbCandidates = [
+          `${homedir()}/Library/Android/sdk/platform-tools/adb`,
+          "adb",
+          "/usr/local/bin/adb",
+          "/opt/homebrew/bin/adb",
+        ];
+        let adbPath = "adb";
+        for (const candidate of adbCandidates) {
+          try { execSync(`test -x "${candidate}"`, { encoding: "utf8" }); adbPath = candidate; break; } catch { /* try next */ }
+        }
+
+        // Verify emulator is running
+        let emulatorId: string;
+        try {
+          const devices = execSync(`"${adbPath}" devices`, { encoding: "utf8" });
+          const emulator = devices.split("\n").find(l => l.includes("emulator") && l.includes("device"));
+          if (!emulator) throw new Error("no emulator running");
+          emulatorId = emulator.split("\t")[0].trim();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await respond(`:x: No running Android emulator found (adb: \`${adbPath}\`). Error: ${msg.slice(0, 200)}`);
+          return;
+        }
+
+        await respond(`:rocket: Installing \`${variant}\` via gradlew on \`${emulatorId}\`...`);
+
+        try {
+          // Resolve JAVA_HOME — Foreman's process may not inherit shell PATH
+          const javaHomeCandidates = [
+            process.env.JAVA_HOME,
+            "/Applications/Android Studio.app/Contents/jbr/Contents/Home", // Android Studio bundled JBR (matches .zshrc)
+            "/Applications/Android Studio Preview.app/Contents/jbr/Contents/Home",
+            "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+            "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+            "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
+            "/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home",
+          ].filter(Boolean) as string[];
+          let javaHome = "";
+          for (const candidate of javaHomeCandidates) {
+            try { execSync(`test -d "${candidate}"`, { encoding: "utf8" }); javaHome = candidate; break; } catch { /* try next */ }
+          }
+
+          const gradleEnv = {
+            ...process.env,
+            PATH: `/opt/homebrew/bin:/opt/homebrew/opt/openjdk/bin:${process.env.PATH || "/usr/bin:/bin"}`,
+            ...(javaHome ? { JAVA_HOME: javaHome } : {}),
+          };
+
+          // Use gradlew install — handles testOnly flag correctly
+          execSync(`./gradlew install${variant}`, { cwd: androidCwd, env: gradleEnv, encoding: "utf8", timeout: 5 * 60 * 1000 });
+
+          // Launch via adb am start
+          const activity = activityArg || (await (async () => {
+            // Try to detect package/activity from the installed APK manifest
+            try {
+              const apk = execSync(
+                `find "${androidCwd}/app/build/outputs/apk" -name "*.apk" -not -path "*/androidTest/*" 2>/dev/null | head -1`,
+                { encoding: "utf8" }
+              ).trim();
+              if (!apk) return null;
+              const pkg = execSync(`"${adbPath}" shell pm list packages | grep myfitnesspal | head -1 | sed 's/package://'`, { encoding: "utf8" }).trim();
+              const act = execSync(`"${adbPath}" shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${pkg} 2>/dev/null | tail -1`, { encoding: "utf8" }).trim();
+              return act || null;
+            } catch { return null; }
+          })()) || null;
+
+          if (activity) {
+            execSync(`"${adbPath}" -s "${emulatorId}" shell am start -n "${activity}"`, { encoding: "utf8" });
+            await app.client.chat.postMessage({ channel, text: `:white_check_mark: Launched \`${activity}\` on \`${emulatorId}\`` });
+          } else {
+            await app.client.chat.postMessage({ channel, text: `:white_check_mark: Installed on \`${emulatorId}\` — couldn't auto-detect launch activity. Run: \`/cc launch-android ${variant} com.package/.Activity\`` });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await respond(`:x: launch-android failed: ${msg.slice(0, 500)}`);
         }
         break;
       }
@@ -1036,6 +1137,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
+      case "help":
       default:
         await respond(
           [
@@ -1054,7 +1156,8 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             "• `/cc new` — start fresh session (resets model, clears plugins)",
             "• `/cc commit <message>` — stage all changes and commit with the given message",
             "• `/cc push` — push the current branch to origin",
-            "• `/cc run [scheme] [simulator]` — install + launch the last built app (skips build)",
+            "• `/cc launch-ios [scheme] [simulator]` — install + launch last built iOS app on simulator",
+            "• `/cc launch-android [variant] [pkg/activity]` — gradlew install + launch on running emulator (default: BetaDebug)",
             "• `/cc build [scheme] [simulator]` — build the Xcode project and target a simulator",
             "• `/cc bitrise <workflow>` — trigger a Bitrise workflow on the current git branch",
             "• `/cc build` — build the iOS app and launch in simulator",
