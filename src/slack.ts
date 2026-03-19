@@ -619,6 +619,8 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           try {
             // Post the message visibly in the worker channel
             await app.client.chat.postMessage({ channel: workerId, text: dispatchMsg });
+            // Post a thinking indicator so the worker channel shows activity
+            await app.client.chat.postMessage({ channel: workerId, text: "_Thinking..._" });
             // Directly invoke the worker session (Slack won't echo our own bot messages back)
             processChannelMessage(app, workerId, dispatchMsg, "").catch((err) => {
               app.client.chat.postMessage({
