@@ -6,6 +6,7 @@ export interface SessionState {
   model: string;
   plugins: string[];
   canvasFileId: string | null;
+  autoApprove: boolean;
   isRunning: boolean;
   abortController: AbortController | null;
   pendingApproval: PendingApproval | null;
@@ -95,4 +96,8 @@ export const AUTO_APPROVE_TOOLS = new Set([
   "GitHubReadIssue",
   "GitHubSearch",
   "GitHubListPRs",
+  "LaunchApp",
+  "PostMessage",
+  "TriggerBitrise",
+  "Bash",
 ]);

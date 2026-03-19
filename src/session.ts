@@ -19,6 +19,7 @@ function createDefaultState(): SessionState {
     model: DEFAULT_MODEL,
     plugins: [],
     canvasFileId: null,
+    autoApprove: false,
     isRunning: false,
     abortController: null,
     pendingApproval: null,
@@ -37,6 +38,7 @@ function save(): void {
         cwd: state.cwd,
         model: state.model,
         plugins: state.plugins,
+        autoApprove: state.autoApprove,
       };
     }
     writeFileSync(PERSIST_FILE, JSON.stringify(persisted, null, 2));
@@ -57,6 +59,7 @@ export function loadSessions(): void {
       state.cwd = saved.cwd ?? state.cwd;
       state.model = saved.model ?? DEFAULT_MODEL;
       state.plugins = saved.plugins ?? [];
+      state.autoApprove = saved.autoApprove ?? false;
       sessions.set(channelId, state);
     }
     console.log(`[session] Loaded ${sessions.size} channel session(s)`);
@@ -150,6 +153,11 @@ export function setRunning(channelId: string, running: boolean): void {
 
 export function setAbortController(channelId: string, controller: AbortController | null): void {
   getState(channelId).abortController = controller;
+}
+
+export function setAutoApprove(channelId: string, enabled: boolean): void {
+  getState(channelId).autoApprove = enabled;
+  save();
 }
 
 export function setPendingApproval(channelId: string, pending: SessionState["pendingApproval"]): void {

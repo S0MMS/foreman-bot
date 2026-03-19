@@ -25,6 +25,7 @@ import {
   addPlugin,
   getPlugins,
   setCanvasFileId,
+  setAutoApprove,
 } from "./session.js";
 import { MODEL_ALIASES, generateCuteName, SUPPORTED_IMAGE_TYPES } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
@@ -109,7 +110,7 @@ const CANVAS_WRITE_INTENT = /\b(write|update|save|add|put|commit|push)\b.*\bcanv
 
 /**
  * Process a text message through the Claude session for a channel and post the response.
- * Used by both the Slack message handler and /cc dispatch.
+ * Used by both the Slack message handler and /cc message.
  */
 async function processChannelMessage(
   app: App,
@@ -334,6 +335,21 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
+      case "auto-approve": {
+        const flag = args[1]?.toLowerCase();
+        if (flag === "on") {
+          setAutoApprove(channel, true);
+          await respond(":white_check_mark: Auto-approve enabled — all tools will run without confirmation.");
+        } else if (flag === "off") {
+          setAutoApprove(channel, false);
+          await respond(":lock: Auto-approve disabled — mutating tools will require confirmation.");
+        } else {
+          const current = getState(channel).autoApprove;
+          await respond(`Auto-approve is currently *${current ? "on" : "off"}*. Use \`/cc auto-approve on\` or \`/cc auto-approve off\`.`);
+        }
+        break;
+      }
+
       case "stop": {
         const state = getState(channel);
         if (state.isRunning) {
@@ -356,6 +372,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           `• Model: \`${state.model}\``,
           `• Working dir: \`${state.cwd}\``,
           `• Running: ${state.isRunning ? "yes" : "no"}`,
+          `• Auto-approve: ${state.autoApprove ? "on" : "off"}`,
           `• Plugins: ${plugins.length === 0 ? "none" : plugins.map((p) => p.split("/").pop()).join(", ")}`,
           `• Foreman: v${FOREMAN_VERSION} | SDK: v${SDK_VERSION}`,
         ];
@@ -578,9 +595,9 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
-      case "dispatch": {
+      case "message": {
         // Fan-out a plain message to one or more channels.
-        // Usage: /cc dispatch #channel1 #channel2 [... message text]
+        // Usage: /cc message #channel1 #channel2 [... message text]
         // Channel args come first; everything after the last channel arg is the message.
         const channelArgs: string[] = [];
         let msgStartIdx = 1;
@@ -600,7 +617,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         }
 
         if (channelArgs.length === 0) {
-          await respond(":x: Usage: `/cc dispatch #channel1 #channel2 [message]`");
+          await respond(":x: Usage: `/cc message #channel1 #channel2 [message]`");
           return;
         }
 
@@ -1149,12 +1166,13 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             "• `/cc name <name>` — set bot persona name for this channel",
             "• `/cc plugin <name-or-path>` — load a plugin (or list loaded plugins)",
             "• `/cc stop` — cancel active query",
+            "• `/cc auto-approve on|off` — skip all tool approval prompts for this channel",
             "• `/cc session` — show session info",
             "• `/cc canvas read` — load canvas, summarize, and start clarifying Q&A",
             "• `/cc canvas write` — generate and save acceptance criteria to canvas",
             "• `/cc spec` — process canvas: ask questions, then write tech spec + Gherkin AC",
             "• `/cc implement` — read canvas spec + wireframes, explore codebase, write Swift code",
-            "• `/cc dispatch #ch1 #ch2 [message]` — broadcast a message to one or more channels",
+            "• `/cc message #ch1 #ch2 [message]` — send a message to one or more channels",
             "• `/cc new` — start fresh session (resets model, clears plugins)",
             "• `/cc commit <message>` — stage all changes and commit with the given message",
             "• `/cc push` — push the current branch to origin",
