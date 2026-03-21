@@ -17,6 +17,7 @@ function createDefaultState(): SessionState {
     ownerId: null,
     cwd: process.env.CLAUDE_CWD || process.cwd(),
     model: DEFAULT_MODEL,
+    adapter: "anthropic",
     plugins: [],
     canvasFileId: null,
     autoApprove: false,
@@ -37,6 +38,7 @@ function save(): void {
         ownerId: state.ownerId,
         cwd: state.cwd,
         model: state.model,
+        adapter: state.adapter,
         plugins: state.plugins,
         autoApprove: state.autoApprove,
       };
@@ -58,6 +60,7 @@ export function loadSessions(): void {
       state.ownerId = saved.ownerId ?? null;
       state.cwd = saved.cwd ?? state.cwd;
       state.model = saved.model ?? DEFAULT_MODEL;
+      state.adapter = saved.adapter ?? "anthropic";
       state.plugins = saved.plugins ?? [];
       state.autoApprove = saved.autoApprove ?? false;
       sessions.set(channelId, state);
@@ -127,6 +130,11 @@ export function setModel(channelId: string, model: string): void {
   save();
 }
 
+export function setAdapter(channelId: string, adapter: string): void {
+  getState(channelId).adapter = adapter;
+  save();
+}
+
 export function addPlugin(channelId: string, path: string): void {
   const state = getState(channelId);
   if (!state.plugins.includes(path)) {
@@ -172,6 +180,15 @@ export function clearSession(channelId: string): void {
   state.isRunning = false;
   state.abortController = null;
   state.pendingApproval = null;
+  save();
+}
+
+export function getAllChannelIds(): string[] {
+  return Array.from(sessions.keys()).filter(id => id !== "_legacy");
+}
+
+export function deleteSession(channelId: string): void {
+  sessions.delete(channelId);
   save();
 }
 

@@ -10,6 +10,7 @@ export interface ForemanConfig {
   slackAppToken?: string;
   anthropicApiKey?: string;
   defaultCwd?: string;
+  openaiApiKey?: string;
   bitriseToken?: string;
   bitriseAppSlug?: string;
   buildWorkspace?: string;   // absolute path to .xcworkspace or .xcodeproj

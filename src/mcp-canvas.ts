@@ -20,7 +20,7 @@ export function createCanvasMcpServer(channelId: string, app: App) {
   const getBotName = () => getState(channelId).name ?? "Foreman";
 
   return createSdkMcpServer({
-    name: "foreman-canvas",
+    name: "foreman-toolbelt",
     tools: [
       tool(
         "CanvasRead",

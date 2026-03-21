@@ -4,6 +4,7 @@ export interface SessionState {
   ownerId: string | null;
   cwd: string;
   model: string;
+  adapter?: string;
   plugins: string[];
   canvasFileId: string | null;
   autoApprove: boolean;
