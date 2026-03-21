@@ -43,13 +43,15 @@ The approval system (Slack buttons for destructive tools) should work the same w
 - [x] Post progress messages for auto-approved tool calls
 
 ### Phase 4 — Foreman Toolbelt
-- [ ] Expose Jira tools in OpenAI function schema
-- [ ] Expose Confluence tools in OpenAI function schema
-- [ ] Expose GitHub tools in OpenAI function schema
-- [ ] Expose Canvas tools in OpenAI function schema
-- [ ] Expose utility tools (PostMessage, TriggerBitrise, LaunchApp) in OpenAI function schema
+- [x] Step 1: Pass `app` (Slack Bolt instance) into OpenAIAdapter via AgentOptions
+- [x] Step 2: Jira tools (JiraCreateTicket, JiraReadTicket, JiraUpdateTicket, JiraSearch, JiraAddComment, JiraUpdateComment, JiraDeleteComment)
+- [x] Step 3: Confluence tools (ConfluenceReadPage, ConfluenceSearch, ConfluenceCreatePage, ConfluenceUpdatePage)
+- [x] Step 4: GitHub tools (GitHubCreatePR, GitHubReadPR, GitHubReadIssue, GitHubSearch, GitHubListPRs)
+- [x] Step 5: Utility tools (TriggerBitrise, LaunchApp)
+- [x] Step 6: Canvas tools (CanvasRead, CanvasCreate, CanvasUpdate, CanvasDelete, CanvasReadById, CanvasUpdateById, CanvasDeleteById)
+- [x] Step 7: PostMessage + DiagramCreate
 
 ### Phase 5 — Polish
-- [ ] Persist conversation history to disk (currently lost on restart)
-- [ ] Update ARCHITECTURE.md to reflect new OpenAI adapter capabilities
+- [x] Persist conversation history to disk (currently lost on restart)
+- [x] Update ARCHITECTURE.md to reflect new OpenAI adapter capabilities
 - [ ] Test with `o3` and `codex-mini-latest`

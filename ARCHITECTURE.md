@@ -102,11 +102,17 @@ Key behaviors:
 
 ### OpenAIAdapter
 
-Uses the `openai` npm package with an agentic tool loop. Maintains per-channel conversation history in memory (not persisted across restarts).
+Uses the `openai` npm package with an agentic tool loop. Per-channel conversation history is persisted to `~/.foreman/openai-histories.json` (capped at 200 messages per channel).
 
-Supports `ReadFile`, `WriteFile`, and `EditFile`. `WriteFile` and `EditFile` require Slack button approval before executing. More file system tools coming in Phase 1.
+**File system tools** (all available, `WriteFile`/`EditFile`/`RunBash` require Slack approval):
+`ReadFile`, `WriteFile`, `EditFile`, `RunBash`, `ListFiles`, `SearchFiles`
+
+**Foreman toolbelt tools** (all auto-approved, same as Anthropic adapter):
+Canvas, Jira, Confluence, GitHub, PostMessage, DiagramCreate, TriggerBitrise, LaunchApp
 
 Model selection: if `state.model` doesn't start with `"claude-"`, it's used as-is; otherwise defaults to `"o4-mini"`.
+
+Recommended models: `openai:o4-mini` (default, fast), `openai:o3` (most capable), `openai:codex-mini-latest` (coding-optimized).
 
 ### Switching Adapters
 

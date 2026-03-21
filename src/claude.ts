@@ -1,4 +1,5 @@
 import type { McpSdkServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { App } from "@slack/bolt";
 import type { ApprovalResult } from "./types.js";
 import { getState } from "./session.js";
 import { getAdapter } from "./adapters/index.js";
@@ -32,7 +33,8 @@ export async function startSession(
   onApprovalNeeded: OnApprovalNeeded,
   onProgress?: OnProgress,
   imagePaths?: string[],
-  mcpServer?: McpSdkServerConfig & { instance: any }
+  mcpServer?: McpSdkServerConfig & { instance: any },
+  app?: App
 ): Promise<QueryResult> {
   const state = getState(channelId);
   const adapter = getAdapter(state.adapter ?? "anthropic");
@@ -42,6 +44,7 @@ export async function startSession(
     systemPrompt: buildSystemPrompt(name),
     imagePaths,
     mcpServer,
+    app,
     onApprovalNeeded,
     onProgress,
     cwd,
@@ -61,7 +64,8 @@ export async function resumeSession(
   onApprovalNeeded: OnApprovalNeeded,
   onProgress?: OnProgress,
   imagePaths?: string[],
-  mcpServer?: McpSdkServerConfig & { instance: any }
+  mcpServer?: McpSdkServerConfig & { instance: any },
+  app?: App
 ): Promise<QueryResult> {
   const state = getState(channelId);
   const adapter = getAdapter(state.adapter ?? "anthropic");
@@ -72,6 +76,7 @@ export async function resumeSession(
     systemPrompt: buildSystemPrompt(name),
     imagePaths,
     mcpServer,
+    app,
     onApprovalNeeded,
     onProgress,
     cwd,

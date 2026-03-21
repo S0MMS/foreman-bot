@@ -1,4 +1,5 @@
 import type { McpSdkServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import type { App } from "@slack/bolt";
 import type { ApprovalResult } from "../types.js";
 
 export type OnApprovalNeeded = (
@@ -16,6 +17,7 @@ export interface AgentOptions {
   systemPrompt: string;
   imagePaths?: string[];
   mcpServer?: McpSdkServerConfig & { instance: any };
+  app?: App;
   onMessage?: OnMessage;
   onProgress?: OnProgress;
   onApprovalNeeded: OnApprovalNeeded;

@@ -172,13 +172,13 @@ async function processChannelMessage(
   let result;
   if (state.sessionId) {
     try {
-      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer);
+      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
     } catch {
       clearSession(channel);
-      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer);
+      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
     }
   } else {
-    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer);
+    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
   }
 
   for (const p of imagePaths) {
@@ -291,13 +291,13 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
       let result;
       if (state.sessionId) {
         try {
-          result = await resumeSession(channel, prompt, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp);
+          result = await resumeSession(channel, prompt, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp, app);
         } catch {
           clearSession(channel);
-          result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp);
+          result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp, app);
         }
       } else {
-        result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp);
+        result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp, app);
       }
       return result.result || "(no response)";
     };
