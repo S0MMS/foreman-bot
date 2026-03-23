@@ -214,9 +214,6 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
 
     const channel = message.channel;
 
-    // Moderator mode: bot is present but silent — does not respond to messages
-    if (getState(channel).moderator) return;
-
     const raw = (hasText ? (message as any).text : "").trim();
     const text = raw.startsWith("!") ? "/" + raw.slice(1) : raw;
     const ts = message.ts;
@@ -368,20 +365,6 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
-      case "moderator": {
-        const flag = args[1]?.toLowerCase();
-        if (flag === "on") {
-          setModerator(channel, true);
-          await respond(":mute: Moderator mode *on* — I'm present in this channel but will not respond to messages.");
-        } else if (flag === "off") {
-          setModerator(channel, false);
-          await respond(":loudspeaker: Moderator mode *off* — I'll respond to messages normally.");
-        } else {
-          const current = getState(channel).moderator;
-          await respond(`Moderator mode is currently *${current ? "on" : "off"}*. Use \`/cc moderator on\` or \`/cc moderator off\`.`);
-        }
-        break;
-      }
 
       case "stop": {
         const state = getState(channel);
@@ -407,7 +390,6 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           `• Working dir: \`${state.cwd}\``,
           `• Running: ${state.isRunning ? "yes" : "no"}`,
           `• Auto-approve: ${state.autoApprove ? "on" : "off"}`,
-          `• Moderator mode: ${state.moderator ? "on (silent)" : "off"}`,
           `• Plugins: ${plugins.length === 0 ? "none" : plugins.map((p) => p.split("/").pop()).join(", ")}`,
           `• Foreman: v${FOREMAN_VERSION} | SDK: v${SDK_VERSION}`,
         ];
@@ -711,6 +693,256 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         }
 
         await respond(`:white_check_mark: Dispatched to ${sent} channel(s): "${dispatchMsg}"`);
+        break;
+      }
+
+      case "quorum": {
+        // The channel you invoke this from IS the judge.
+        // Listed channels are workers — they post answers back here.
+        // The bot in this channel synthesizes once all workers have responded.
+        // Usage: /cc quorum #worker1 #worker2 <question>
+
+        // Parse channels from args — Slack formats mentions as <#ID|name>, may have trailing commas
+        const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+        const resolveChannel = (raw: string): string | null => {
+          const clean = raw.replace(/,/g, "");
+          const mentionMatch = clean.match(/<#([A-Z0-9]+)/);
+          if (mentionMatch) return mentionMatch[1];
+          if (/^[A-Z0-9]{8,}$/.test(clean)) return clean;
+          const name = clean.startsWith("#") ? clean.slice(1) : clean;
+          const found = (listRes.channels || []).find((c: any) => c.name === name);
+          return found?.id ?? null;
+        };
+
+        const rawChannels: string[] = [];
+        let questionStartIdx = 1;
+        for (let i = 1; i < args.length; i++) {
+          const arg = args[i];
+          const clean = arg.replace(/,/g, "");
+          if (/<#[A-Z0-9]+/.test(clean) || /^[A-Z0-9]{8,}$/.test(clean) || clean.startsWith("#")) {
+            rawChannels.push(arg);
+            questionStartIdx = i + 1;
+          } else {
+            break;
+          }
+        }
+        const question = args.slice(questionStartIdx).join(" ").trim();
+
+        if (rawChannels.length < 1 || !question) {
+          await respond(":x: Usage: `/cc quorum #worker1 #worker2 <question>`\nNeed at least 1 worker channel and a question. This channel's bot acts as judge.");
+          return;
+        }
+
+        const resolvedIds = rawChannels.map(resolveChannel);
+        const failedIdx = resolvedIds.findIndex(id => !id);
+        if (failedIdx !== -1) {
+          await respond(`:x: Could not resolve channel: \`${rawChannels[failedIdx]}\``);
+          return;
+        }
+
+        const workerIds = (resolvedIds as string[]).filter(id => id !== channel);
+        if (workerIds.length === 0) {
+          await respond(":x: Need at least one worker channel distinct from this channel.");
+          return;
+        }
+
+        // Snapshot timestamp — only count messages newer than this
+        const startTs = (Date.now() / 1000).toFixed(6);
+
+        await respond(`:arrows_counterclockwise: Quorum started — dispatching to ${workerIds.length} worker(s). I'll synthesize when they respond...`);
+
+        // Workers post their answers back to this channel
+        const workerPrompt = `You are participating in a multi-model Delphi verification process. This is a new, independent request — do not reference or repeat any previous answers from prior conversations. Answer this question fresh and completely, then post your ENTIRE answer as a SINGLE message to <#${channel}>. Do not split your answer across multiple messages. This process may be automated in future rounds.\n\nQuestion: ${question}`;
+
+        for (const workerId of workerIds) {
+          try {
+            await app.client.chat.postMessage({ channel: workerId, text: workerPrompt });
+            processChannelMessage(app, workerId, workerPrompt, "").catch((err) => {
+              app.client.chat.postMessage({
+                channel,
+                text: `:x: Worker <#${workerId}> error: ${err instanceof Error ? err.message : String(err)}`,
+              }).catch(() => {});
+            });
+          } catch (err) {
+            await app.client.chat.postMessage({
+              channel,
+              text: `:x: Failed to dispatch to <#${workerId}>: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
+        }
+
+        // Poll this channel for bot messages (worker responses).
+        // Bot messages from workers won't trigger the normal message handler
+        // (it filters bot_id), so the judge only fires when we explicitly dispatch it.
+        const POLL_INTERVAL_MS = 10_000;
+        const TIMEOUT_MS = 5 * 60_000;
+        const deadline = Date.now() + TIMEOUT_MS;
+
+        const dispatchJudge = async (botMsgs: any[], timedOut = false) => {
+          const status = timedOut
+            ? `:warning: Quorum timed out — synthesizing with partial responses.`
+            : `:scales: All workers responded — synthesizing...`;
+          await app.client.chat.postMessage({ channel, text: status });
+
+          // Reverse to chronological order (history returns newest-first).
+          // Include ALL bot messages — workers may post multiple chunks per response.
+          const chronological = botMsgs.slice().reverse();
+          const msgSummary = chronological
+            .map((m: any, i: number) => `**Message ${i + 1}:**\n${m.text || "(no text)"}`)
+            .join("\n\n---\n\n");
+
+          const judgePrompt = `${workerIds.length} AI worker(s) answered this question: "${question}"\n\nHere are all their messages posted to this channel (in chronological order — a single worker may have posted multiple messages):\n\n${msgSummary}\n\nAssess the full content of all worker responses, identify what is correct, fill in any gaps or missing insight, and reply here with your synthesized conclusion. Do not use any tools — just respond directly.`;
+          processChannelMessage(app, channel, judgePrompt, "").catch((err) => {
+            app.client.chat.postMessage({
+              channel,
+              text: `:x: Judge error: ${err instanceof Error ? err.message : String(err)}`,
+            }).catch(() => {});
+          });
+        };
+
+        // After detecting N bot messages, wait an extra 30s before dispatching the judge.
+        // This gives multi-chunk worker responses time to finish arriving.
+        const CHUNK_SETTLE_MS = 30_000;
+
+        const pollLoop = async () => {
+          let settleDeadline: number | null = null;
+          while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+            try {
+              const hist = await app.client.conversations.history({ channel, oldest: startTs, limit: 50 });
+              const botMsgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > startTs);
+              if (botMsgs.length >= workerIds.length) {
+                if (settleDeadline === null) {
+                  // First time we hit the threshold — start settle timer
+                  settleDeadline = Date.now() + CHUNK_SETTLE_MS;
+                  await app.client.chat.postMessage({ channel, text: `:hourglass: Workers responded — waiting 30s for any remaining chunks...` });
+                } else if (Date.now() >= settleDeadline) {
+                  // Settle period passed — dispatch judge with all collected messages
+                  await dispatchJudge(botMsgs, false);
+                  return;
+                }
+              }
+            } catch { /* ignore poll errors */ }
+          }
+          // Timeout — fetch whatever we have and dispatch anyway
+          try {
+            const hist = await app.client.conversations.history({ channel, oldest: startTs, limit: 50 });
+            const botMsgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > startTs);
+            await dispatchJudge(botMsgs, true);
+          } catch {
+            await dispatchJudge([], true);
+          }
+        };
+
+        pollLoop().catch((err) => {
+          app.client.chat.postMessage({
+            channel,
+            text: `:x: Quorum poll error: ${err instanceof Error ? err.message : String(err)}`,
+          }).catch(() => {});
+        });
+        break;
+      }
+
+      case "verify": {
+        // Delphi Phase 2: dispatch workers to critique the judge's last response.
+        // Usage: /cc verify #worker1 #worker2
+        const verifyListRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+        const resolveVerifyChannel = (raw: string): string | null => {
+          const clean = raw.replace(/,/g, "");
+          const mentionMatch = clean.match(/<#([A-Z0-9]+)/);
+          if (mentionMatch) return mentionMatch[1];
+          if (/^[A-Z0-9]{8,}$/.test(clean)) return clean;
+          const name = clean.startsWith("#") ? clean.slice(1) : clean;
+          const found = (verifyListRes.channels || []).find((c: any) => c.name === name);
+          return found?.id ?? null;
+        };
+
+        const verifyWorkerRaw: string[] = [];
+        for (let i = 1; i < args.length; i++) {
+          const clean = args[i].replace(/,/g, "");
+          if (/<#[A-Z0-9]+/.test(clean) || /^[A-Z0-9]{8,}$/.test(clean) || clean.startsWith("#")) {
+            verifyWorkerRaw.push(args[i]);
+          } else {
+            break;
+          }
+        }
+
+        if (verifyWorkerRaw.length === 0) {
+          await respond(":x: Usage: `/cc verify #worker1 #worker2`\nWorkers will critique the judge's last response in this channel.");
+          return;
+        }
+
+        const verifyWorkerIds = verifyWorkerRaw
+          .map(resolveVerifyChannel)
+          .filter((id): id is string => id !== null && id !== channel);
+
+        if (verifyWorkerIds.length === 0) {
+          await respond(":x: No valid worker channels found.");
+          return;
+        }
+
+        // Fetch the judge's last bot message from this channel.
+        // Skip cost/metadata lines like "_1 turns | $0.2251_" — those are posted after every response.
+        const isMeta = (text: string) => /_\d+ turns \| \$[\d.]+_/.test(text);
+        const verifyHist = await app.client.conversations.history({ channel, limit: 20 }).catch(() => ({ messages: [] }));
+        const lastBotMsg = (verifyHist.messages || []).find((m: any) => m.bot_id && m.text && !isMeta(m.text));
+        if (!lastBotMsg) {
+          await respond(":x: No judge response found in this channel. Run `/cc quorum` first.");
+          return;
+        }
+
+        const verifyPrompt = `An AI judge synthesized the following answer. Critically review it — what is correct, what is missing, what is inaccurate or incomplete? Post your critique to <#${channel}>.\n\nJudge's response:\n${lastBotMsg.text}`;
+
+        for (const workerId of verifyWorkerIds) {
+          try {
+            await app.client.chat.postMessage({ channel: workerId, text: verifyPrompt });
+            processChannelMessage(app, workerId, verifyPrompt, "").catch((err) => {
+              app.client.chat.postMessage({
+                channel,
+                text: `:x: Worker <#${workerId}> error: ${err instanceof Error ? err.message : String(err)}`,
+              }).catch(() => {});
+            });
+          } catch (err) {
+            await app.client.chat.postMessage({
+              channel,
+              text: `:x: Failed to dispatch to <#${workerId}>: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          }
+        }
+
+        await respond(`:mag: Dispatched to ${verifyWorkerIds.length} worker(s) for critique. Run \`/cc revise\` once they've responded.`);
+        break;
+      }
+
+      case "revise": {
+        // Delphi Phase 3: judge revises its answer based on worker critiques.
+        // Usage: /cc revise (no args — reads recent bot messages from this channel)
+
+        const isMetaMsg = (text: string) => /_\d+ turns \| \$[\d.]+_/.test(text);
+        const reviseHist = await app.client.conversations.history({ channel, limit: 20 }).catch(() => ({ messages: [] }));
+        const botMsgs = (reviseHist.messages || [])
+          .filter((m: any) => m.bot_id && m.text && !isMetaMsg(m.text))
+          .reverse(); // oldest first
+
+        if (botMsgs.length === 0) {
+          await respond(":x: No messages found. Run `/cc quorum` and `/cc verify` first.");
+          return;
+        }
+
+        const msgSummary = botMsgs
+          .map((m: any, i: number) => `**Message ${i + 1}:**\n${m.text}`)
+          .join("\n\n---\n\n");
+
+        await respond(":pencil2: Revising based on worker critiques...");
+
+        const revisePrompt = `You previously synthesized an answer to a question. AI workers have since reviewed your synthesis and posted critiques. Below are the recent messages from this channel in chronological order — your original synthesis followed by worker critiques:\n\n${msgSummary}\n\nIdentify your original synthesis and the worker critiques. Revise your answer to incorporate valid feedback, correct any errors, and fill in any identified gaps. Respond directly with your final revised answer. Do not use any tools.`;
+
+        processChannelMessage(app, channel, revisePrompt, "").catch((err) => {
+          app.client.chat.postMessage({
+            channel,
+            text: `:x: Revise error: ${err instanceof Error ? err.message : String(err)}`,
+          }).catch(() => {});
+        });
         break;
       }
 
@@ -1229,6 +1461,9 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             "• `/cc spec` — process canvas: ask questions, then write tech spec + Gherkin AC",
             "• `/cc implement` — read canvas spec + wireframes, explore codebase, write Swift code",
             "• `/cc message #ch1 #ch2 [message]` — send a message to one or more channels",
+            "• `/cc quorum #w1 #w2 <question>` — workers answer and post here; this channel's bot synthesizes",
+            "• `/cc verify #w1 #w2` — Delphi phase 2: workers critique the judge's last response",
+            "• `/cc revise` — Delphi phase 3: judge revises its answer incorporating worker critiques",
             "• `/cc new` — start fresh session (resets model, clears plugins)",
             "• `/cc commit <message>` — stage all changes and commit with the given message",
             "• `/cc push` — push the current branch to origin",
