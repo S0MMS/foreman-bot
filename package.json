@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.70",
+    "@google/generative-ai": "^0.24.1",
     "@slack/bolt": "^4.1.0",
     "@types/express": "^5.0.6",
     "dotenv": "^16.4.7",

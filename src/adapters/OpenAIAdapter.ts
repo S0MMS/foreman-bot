@@ -13,7 +13,7 @@ import { createPR, readPR, readPRComments, readIssue, searchGitHub, listPRs } fr
 import { fetchChannelCanvas, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById } from "../canvas.js";
 
 // Tool definitions in OpenAI function-calling schema
-const TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
+export const TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
@@ -132,6 +132,7 @@ const TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   { type: "function", function: { name: "CanvasDeleteById", description: "Delete a canvas element by its raw ID.", parameters: { type: "object", properties: { sectionId: { type: "string" } }, required: ["sectionId"] } } },
   // Messaging
   { type: "function", function: { name: "PostMessage", description: "Post a message to any Slack channel.", parameters: { type: "object", properties: { channel: { type: "string", description: "Channel ID or name." }, text: { type: "string" } }, required: ["channel", "text"] } } },
+  { type: "function", function: { name: "ReadChannel", description: "Read recent messages from a Slack channel. The bot must be a member.", parameters: { type: "object", properties: { channel: { type: "string", description: "Channel ID or name." }, limit: { type: "number", description: "Number of messages to fetch (default: 20, max: 100)." } }, required: ["channel"] } } },
   { type: "function", function: { name: "DiagramCreate", description: "Render a Mermaid diagram and post it as an image to the Slack channel.", parameters: { type: "object", properties: { mermaid: { type: "string", description: "Valid Mermaid syntax." }, title: { type: "string" } }, required: ["mermaid"] } } },
   // Utility
   { type: "function", function: { name: "TriggerBitrise", description: "Trigger a Bitrise CI workflow on the current git branch.", parameters: { type: "object", properties: { workflow: { type: "string" } }, required: ["workflow"] } } },
@@ -139,10 +140,10 @@ const TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
 ];
 
 // Tools that require user approval before executing
-const APPROVAL_REQUIRED = new Set(["WriteFile", "EditFile", "RunBash"]);
+export const APPROVAL_REQUIRED = new Set(["WriteFile", "EditFile", "RunBash"]);
 
 // Execute a tool call and return the result as a string
-async function executeTool(name: string, args: Record<string, unknown>, cwd: string, channelId: string, app?: App): Promise<string> {
+export async function executeTool(name: string, args: Record<string, unknown>, cwd: string, channelId: string, app?: App): Promise<string> {
   if (name === "ReadFile") {
     const path = args.path as string;
     try {
@@ -458,9 +459,34 @@ async function executeTool(name: string, args: Record<string, unknown>, cwd: str
         const found = (listRes.channels || []).find((c: any) => c.name === target.replace(/^#/, ""));
         if (found?.id) target = found.id;
       }
-      await app.client.chat.postMessage({ channel: target, text: args.text as string });
+      const state = getState(channelId);
+      const botName = state.name ?? "Foreman";
+      const signedText = `${args.text as string}\n\n_— ${botName} (${state.model})_`;
+      await app.client.chat.postMessage({ channel: target, text: signedText });
       return `Message posted to ${args.channel}.`;
     } catch (err) { return `Error posting message: ${err instanceof Error ? err.message : String(err)}`; }
+  }
+  // ReadChannel
+  if (name === "ReadChannel") {
+    if (!app) return "ReadChannel requires Slack app context.";
+    try {
+      let target = args.channel as string;
+      if (!target.match(/^[A-Z0-9]{8,}$/)) {
+        const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+        const found = (listRes.channels || []).find((c: any) => c.name === target.replace(/^#/, ""));
+        if (found?.id) target = found.id;
+      }
+      const msgLimit = Math.min((args.limit as number) ?? 20, 100);
+      const res = await app.client.conversations.history({ channel: target, limit: msgLimit });
+      const messages = (res.messages || []).reverse();
+      if (messages.length === 0) return `No messages found in channel ${args.channel}.`;
+      const lines = messages.map((msg: any) => {
+        const ts = msg.ts ? new Date(Number(msg.ts) * 1000).toISOString() : "?";
+        const sender = msg.bot_id ? `[bot:${msg.username || "unknown"}]` : `<@${msg.user || "unknown"}>`;
+        return `[${ts}] ${sender}: ${msg.text || "(no text)"}`;
+      });
+      return lines.join("\n");
+    } catch (err) { return `Error reading channel: ${err instanceof Error ? err.message : String(err)}`; }
   }
   // DiagramCreate
   if (name === "DiagramCreate") {

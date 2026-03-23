@@ -810,11 +810,59 @@ export function createCanvasMcpServer(channelId: string, app: App) {
               const found = (listRes.channels || []).find((c: any) => c.name === name);
               if (found?.id) channelTarget = found.id;
             }
-            await app.client.chat.postMessage({ channel: channelTarget, text });
+            const botName = getBotName();
+            const model = getState(channelId).model;
+            const signedText = `${text}\n\n_— ${botName} (${model})_`;
+            await app.client.chat.postMessage({ channel: channelTarget, text: signedText });
             return { content: [{ type: "text" as const, text: `Message posted to ${targetChannel}.` }] };
           } catch (err) {
             return {
               content: [{ type: "text" as const, text: `Error posting message: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "ReadChannel",
+        "Read recent messages from a Slack channel. Returns the latest messages as plain text, including the sender and timestamp. " +
+        "Use this to catch up on what was posted in a discussion channel before responding. " +
+        "The bot must be a member of the channel to read it.",
+        {
+          channel: z.string().describe("The channel ID or name (e.g. 'C0ABC123' or 'discussion') to read from"),
+          limit: z.number().optional().describe("Number of messages to fetch (default: 20, max: 100)"),
+        },
+        async ({ channel: targetChannel, limit }) => {
+          try {
+            // Resolve channel name to ID if needed
+            let channelTarget = targetChannel;
+            if (!targetChannel.match(/^[A-Z0-9]{8,}$/)) {
+              const name = targetChannel.replace(/^#/, "");
+              const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+              const found = (listRes.channels || []).find((c: any) => c.name === name);
+              if (found?.id) channelTarget = found.id;
+            }
+
+            const msgLimit = Math.min(limit ?? 20, 100);
+            const res = await app.client.conversations.history({ channel: channelTarget, limit: msgLimit });
+            const messages = (res.messages || []).reverse(); // oldest first
+
+            if (messages.length === 0) {
+              return { content: [{ type: "text" as const, text: `No messages found in channel ${targetChannel}.` }] };
+            }
+
+            // Format messages: resolve user names where possible
+            const lines: string[] = [];
+            for (const msg of messages) {
+              const ts = msg.ts ? new Date(Number(msg.ts) * 1000).toISOString() : "?";
+              const sender = (msg as any).bot_id ? `[bot:${(msg as any).username || "unknown"}]` : `<@${(msg as any).user || "unknown"}>`;
+              const text = (msg as any).text || "(no text)";
+              lines.push(`[${ts}] ${sender}: ${text}`);
+            }
+
+            return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error reading channel: ${err instanceof Error ? err.message : String(err)}` }],
             };
           }
         }

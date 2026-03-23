@@ -21,6 +21,7 @@ function createDefaultState(): SessionState {
     plugins: [],
     canvasFileId: null,
     autoApprove: false,
+    moderator: false,
     isRunning: false,
     abortController: null,
     pendingApproval: null,
@@ -41,6 +42,7 @@ function save(): void {
         adapter: state.adapter,
         plugins: state.plugins,
         autoApprove: state.autoApprove,
+        moderator: state.moderator,
       };
     }
     writeFileSync(PERSIST_FILE, JSON.stringify(persisted, null, 2));
@@ -63,6 +65,7 @@ export function loadSessions(): void {
       state.adapter = saved.adapter ?? "anthropic";
       state.plugins = saved.plugins ?? [];
       state.autoApprove = saved.autoApprove ?? false;
+      state.moderator = saved.moderator ?? false;
       sessions.set(channelId, state);
     }
     console.log(`[session] Loaded ${sessions.size} channel session(s)`);
@@ -165,6 +168,11 @@ export function setAbortController(channelId: string, controller: AbortControlle
 
 export function setAutoApprove(channelId: string, enabled: boolean): void {
   getState(channelId).autoApprove = enabled;
+  save();
+}
+
+export function setModerator(channelId: string, enabled: boolean): void {
+  getState(channelId).moderator = enabled;
   save();
 }
 

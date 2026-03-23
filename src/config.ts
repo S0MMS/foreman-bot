@@ -11,6 +11,7 @@ export interface ForemanConfig {
   anthropicApiKey?: string;
   defaultCwd?: string;
   openaiApiKey?: string;
+  geminiApiKey?: string;
   bitriseToken?: string;
   bitriseAppSlug?: string;
   buildWorkspace?: string;   // absolute path to .xcworkspace or .xcodeproj

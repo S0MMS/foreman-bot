@@ -26,6 +26,7 @@ import {
   getPlugins,
   setCanvasFileId,
   setAutoApprove,
+  setModerator,
   setAdapter,
   getAllChannelIds,
   deleteSession,
@@ -211,9 +212,13 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
       return;
     }
 
+    const channel = message.channel;
+
+    // Moderator mode: bot is present but silent — does not respond to messages
+    if (getState(channel).moderator) return;
+
     const raw = (hasText ? (message as any).text : "").trim();
     const text = raw.startsWith("!") ? "/" + raw.slice(1) : raw;
-    const channel = message.channel;
     const ts = message.ts;
     const requesterId = ("user" in message && message.user) ? message.user : "";
 
@@ -363,6 +368,21 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
+      case "moderator": {
+        const flag = args[1]?.toLowerCase();
+        if (flag === "on") {
+          setModerator(channel, true);
+          await respond(":mute: Moderator mode *on* — I'm present in this channel but will not respond to messages.");
+        } else if (flag === "off") {
+          setModerator(channel, false);
+          await respond(":loudspeaker: Moderator mode *off* — I'll respond to messages normally.");
+        } else {
+          const current = getState(channel).moderator;
+          await respond(`Moderator mode is currently *${current ? "on" : "off"}*. Use \`/cc moderator on\` or \`/cc moderator off\`.`);
+        }
+        break;
+      }
+
       case "stop": {
         const state = getState(channel);
         if (state.isRunning) {
@@ -387,6 +407,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           `• Working dir: \`${state.cwd}\``,
           `• Running: ${state.isRunning ? "yes" : "no"}`,
           `• Auto-approve: ${state.autoApprove ? "on" : "off"}`,
+          `• Moderator mode: ${state.moderator ? "on (silent)" : "off"}`,
           `• Plugins: ${plugins.length === 0 ? "none" : plugins.map((p) => p.split("/").pop()).join(", ")}`,
           `• Foreman: v${FOREMAN_VERSION} | SDK: v${SDK_VERSION}`,
         ];
