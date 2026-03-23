@@ -183,7 +183,6 @@ export function setPendingApproval(channelId: string, pending: SessionState["pen
 export function clearSession(channelId: string): void {
   const state = getState(channelId);
   state.sessionId = null;
-  state.model = DEFAULT_MODEL;
   state.plugins = [];
   state.isRunning = false;
   state.abortController = null;

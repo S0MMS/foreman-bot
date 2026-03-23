@@ -247,13 +247,16 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
   });
 
   // Slash command: /cc
-  app.command("/cc", async ({ command, ack, respond }) => {
+  app.command("/cc", async ({ command, ack }) => {
     await ack();
 
     const channel = command.channel_id;
     const userId = command.user_id;
     const args = command.text.trim().split(/\s+/);
     const subcommand = args[0]?.toLowerCase();
+
+    // Use chat.postMessage instead of respond() — response_url is unreliable in Socket Mode
+    const respond = (text: string) => app.client.chat.postMessage({ channel, text });
 
     // Commands restricted to channel owner
     const OWNER_ONLY = new Set(["cwd", "new", "reboot"]);
