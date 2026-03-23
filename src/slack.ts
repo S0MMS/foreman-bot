@@ -20,6 +20,7 @@ import {
   setModel,
   setName,
   setOwner,
+  setSessionId,
   clearSession,
   setPendingApproval,
   addPlugin,
@@ -181,6 +182,7 @@ async function processChannelMessage(
   } else {
     result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
   }
+  if (result.sessionId) setSessionId(channel, result.sessionId);
 
   for (const p of imagePaths) {
     try { unlinkSync(p); } catch { /* ignore */ }
@@ -304,6 +306,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
       } else {
         result = await startSession(channel, prompt, state.cwd, name, onApprovalNeeded, onProgress, undefined, canvasMcp, app);
       }
+      if (result.sessionId) setSessionId(channel, result.sessionId);
       return result.result || "(no response)";
     };
 
