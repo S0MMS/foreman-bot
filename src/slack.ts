@@ -32,6 +32,7 @@ import {
   setAdapter,
   getAllChannelIds,
   deleteSession,
+  setContextPrimer,
 } from "./session.js";
 import { MODEL_ALIASES, generateCuteName, SUPPORTED_IMAGE_TYPES } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
@@ -128,6 +129,13 @@ async function processChannelMessage(
   noSlackMcp?: boolean
 ): Promise<void> {
   const state = getState(channel);
+
+  // Inject context primer if set (from /cc model --with-context)
+  // Prepend silently to the first message after a model switch
+  if (state.contextPrimer) {
+    text = state.contextPrimer + text;
+    state.contextPrimer = null; // transient — clear after use, no need to persist
+  }
 
   // Resolve channel name (persona) on first encounter
   if (state.name === null) {
@@ -341,27 +349,75 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
       }
 
       case "model": {
-        const modelArg = args[1]?.toLowerCase();
+        const withContext = args.includes("--with-context");
+        const filteredArgs = args.filter(a => a !== "--with-context");
+        const modelArg = filteredArgs[1]?.toLowerCase();
         if (!modelArg) {
           const state = getState(channel);
           const aliases = Object.entries(MODEL_ALIASES)
             .map(([alias, id]) => `\`${alias}\` → \`${id}\``)
             .join(", ");
-          await respond(`Current model: \`${state.model}\` (vendor: \`${state.adapter ?? "anthropic"}\`)\nAliases: ${aliases}\nTo switch vendor: \`/cc model openai:gpt-4o\` or \`/cc model anthropic:claude-sonnet-4-6\``);
+          await respond(`Current model: \`${state.model}\` (vendor: \`${state.adapter ?? "anthropic"}\`)\nAliases: ${aliases}\nTo switch vendor: \`/cc model openai:gpt-4o\` or \`/cc model anthropic:claude-sonnet-4-6\`\nTo switch with context: add \`--with-context\``);
           return;
         }
         // Support vendor:model syntax (e.g. openai:gpt-4o, anthropic:claude-sonnet-4-6)
+        let displayName: string;
         const colonIdx = modelArg.indexOf(":");
         if (colonIdx !== -1) {
           const vendor = modelArg.slice(0, colonIdx);
           const model = modelArg.slice(colonIdx + 1);
           setAdapter(channel, vendor);
           setModel(channel, model);
-          await respond(`Vendor set to \`${vendor}\`, model set to \`${model}\``);
+          displayName = `vendor \`${vendor}\`, model \`${model}\``;
         } else {
           const modelId = MODEL_ALIASES[modelArg] || modelArg;
           setModel(channel, modelId);
-          await respond(`Model set to \`${modelId}\``);
+          displayName = `model \`${modelId}\``;
+        }
+
+        if (withContext) {
+          // Reset session so new model starts fresh
+          clearSession(channel);
+          // Read full channel history and build a context primer
+          try {
+            const allMessages: any[] = [];
+            let cursor: string | undefined;
+            do {
+              const hist: any = await app.client.conversations.history({
+                channel,
+                limit: 200,
+                ...(cursor ? { cursor } : {}),
+              });
+              allMessages.push(...(hist.messages || []));
+              cursor = hist.response_metadata?.next_cursor || undefined;
+            } while (cursor);
+
+            // Oldest first, filter out noise
+            const lines: string[] = [];
+            for (const m of allMessages.reverse()) {
+              const txt = (m.text || "").trim();
+              if (!txt) continue;
+              if (txt.startsWith("/cc ")) continue;                    // skip commands
+              if (/^_Done in \d+/.test(txt)) continue;                 // skip cost lines
+              if (/^_[^\n]*_$/.test(txt) && !txt.includes("\n")) continue; // skip single-line italic status
+              if (/^:[a-z_]+: \*/.test(txt) && txt.length < 120) continue; // skip short emoji banners
+              const role = m.bot_id ? "Bot" : "User";
+              lines.push(`${role}: ${txt}`);
+            }
+
+            if (lines.length > 0) {
+              const transcript = lines.join("\n\n");
+              const primer = `You are taking over a conversation that was in progress with a different AI model. Here is the full message history from this Slack channel. Read it to understand the context of our work, then respond to the next message as if you are fully up to speed — do not acknowledge this history explicitly, just continue naturally.\n\n=== CONVERSATION HISTORY ===\n${transcript}\n=== END OF HISTORY ===\n\n`;
+              setContextPrimer(channel, primer);
+              await respond(`:brain: Switched to ${displayName} with context from ${lines.length} messages. Send your next message to continue.`);
+            } else {
+              await respond(`:brain: Switched to ${displayName}. No message history found to inject.`);
+            }
+          } catch (err) {
+            await respond(`:brain: Switched to ${displayName}. Could not read history: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        } else {
+          await respond(`Switched to ${displayName}`);
         }
         break;
       }

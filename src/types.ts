@@ -12,6 +12,7 @@ export interface SessionState {
   isRunning: boolean;
   abortController: AbortController | null;
   pendingApproval: PendingApproval | null;
+  contextPrimer: string | null;
 }
 
 export const MODEL_ALIASES: Record<string, string> = {

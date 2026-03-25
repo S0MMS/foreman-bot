@@ -25,6 +25,7 @@ function createDefaultState(): SessionState {
     isRunning: false,
     abortController: null,
     pendingApproval: null,
+    contextPrimer: null,
   };
 }
 
@@ -178,6 +179,11 @@ export function setModerator(channelId: string, enabled: boolean): void {
 
 export function setPendingApproval(channelId: string, pending: SessionState["pendingApproval"]): void {
   getState(channelId).pendingApproval = pending;
+}
+
+export function setContextPrimer(channelId: string, primer: string | null): void {
+  getState(channelId).contextPrimer = primer;
+  // not persisted — transient, only needed for the next message
 }
 
 export function clearSession(channelId: string): void {
