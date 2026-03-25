@@ -14,7 +14,7 @@ Foreman is a Slack bot that bridges AI agent sessions into Slack channels. Each 
 
 ```
 src/
-  index.ts          — Entry point: starts Bolt app, loads sessions, registers handlers
+  index.ts          — Entry point: starts Bolt app, loads sessions, starts Temporal worker
   slack.ts          — All Slack event handlers: messages, /cc commands, approve/deny buttons
   claude.ts         — Claude Agent SDK integration: startSession, resumeSession, abortCurrentQuery
   session.ts        — Per-channel state management with disk persistence (~/.foreman/sessions.json)
@@ -24,6 +24,11 @@ src/
   init.ts           — Interactive setup wizard (foreman init)
   canvas.ts         — Canvas fetch/append helpers (Slack Files API)
   mcp-canvas.ts     — MCP server exposing canvas tools + channel tools to agents
+  temporal/
+    workflows.ts    — Temporal workflow definitions (durable, replayable)
+    activities.ts   — Temporal activities (actual work: dispatch bots, call APIs)
+    worker.ts       — Temporal worker: polls server, executes workflows + activities
+    client.ts       — Temporal client helper: start workflow executions from Foreman
   adapters/
     index.ts        — Adapter registry: maps vendor name → AgentAdapter instance
     OpenAIAdapter.ts — OpenAI chat completions agentic loop (exports TOOLS, APPROVAL_REQUIRED, executeTool)
@@ -117,6 +122,7 @@ All control commands use the Slack slash command `/cc`. Parsed in `slack.ts`.
 | `/cc launch-android [variant]` | `gradlew install` + `adb am start` on running emulator (default: BetaDebug). |
 | `/cc bitrise <workflow>` | Trigger a Bitrise CI workflow on the current git branch. |
 | `/cc cleanup` | Remove stale channel sessions from disk. |
+| `/cc workflow hello <name>` | Run the hello Temporal workflow — proves Temporal integration is working. |
 | `/cc reboot` | Exit process (launchd restarts Foreman). |
 
 ### Escape hatch for Claude slash commands
@@ -273,6 +279,25 @@ Write under `## Acceptance Criteria` using **Gherkin format** (mandatory):
 ```
 
 Each `Given`/`When`/`Then`/`And` must be on its own line, wrapped in backticks, with a blank line between each (Slack canvas API collapses single newlines).
+
+## Temporal Workflow Engine
+
+Foreman integrates with Temporal as its workflow execution platform. Three processes make up the full system:
+
+| Process | Role |
+|---|---|
+| **Foreman** (this process) | Slack bot + Temporal worker |
+| **foreman-toolbelt** | In-process MCP server (per query) |
+| **Temporal Server** | Workflow state engine (`temporal server start-dev` locally) |
+
+The Temporal worker starts automatically in `index.ts`. If the server isn't running, Foreman logs a warning and continues — all non-workflow features work normally.
+
+**Local dev**: `temporal server start-dev` (Homebrew, no Docker needed)
+**Production**: Temporal Cloud — same code, just swap `localhost:7233` for the cloud address
+
+Key files: `src/temporal/workflows.ts`, `activities.ts`, `worker.ts`, `client.ts`
+
+**Important — nested session guard**: `index.ts` calls `delete process.env.CLAUDECODE` on startup. This prevents the Claude Code CLI's anti-nesting guard (added in v2.1.83) from rejecting sessions spawned by the Agent SDK. Without it, every bot session fails with "Claude Code cannot be launched inside another Claude Code session."
 
 ## Known Gotchas
 

@@ -18,6 +18,12 @@ import { loadSessions } from "./session.js";
 import { startSession, resumeSession } from "./claude.js";
 import { getState } from "./session.js";
 import { startWebhookServer } from "./webhook.js";
+import { startTemporalWorker } from "./temporal/worker.js";
+
+// Prevent "nested session" detection when the Agent SDK spawns Claude Code.
+// The SDK inherits process.env and sets CLAUDECODE=1 on child processes;
+// if it leaks back into our env, every subsequent session launch is rejected.
+delete process.env.CLAUDECODE;
 
 applyConfig();   // ~/.foreman/config.json (highest priority)
 dotenv.config(); // .env fills any gaps (doesn't override already-set vars)
@@ -38,6 +44,12 @@ loadSessions();
   const botId = auth.bot_id as string;
   registerHandlers(app, botUserId, botId);
   startWebhookServer();
+
+  // Start Temporal worker (graceful — won't crash Foreman if server is not running)
+  startTemporalWorker().catch((err) => {
+    console.warn('[Temporal] Worker not started (is the Temporal server running?):', err.message);
+  });
+
   console.log("Foreman is running");
   console.log(`  Working directory: ${process.env.CLAUDE_CWD || process.cwd()}`);
 

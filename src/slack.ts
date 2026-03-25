@@ -1,5 +1,6 @@
 import type { App } from "@slack/bolt";
 import type { ApprovalResult } from "./types.js";
+import { setSlackApp, setProcessChannelMessage } from "./temporal/slack-context.js";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs";
 import { execSync, spawn } from "child_process";
 import { homedir, tmpdir } from "os";
@@ -207,6 +208,10 @@ async function processChannelMessage(
  * Each channel gets its own independent session.
  */
 export function registerHandlers(app: App, botUserId: string, botId: string): void {
+  // Provide Slack app + processChannelMessage to Temporal activities
+  setSlackApp(app);
+  setProcessChannelMessage(processChannelMessage);
+
   app.message(async ({ message, client }) => {
     const hasText = "text" in message && message.text;
     const hasFiles = "files" in message && Array.isArray((message as any).files) && (message as any).files.length > 0;
@@ -923,210 +928,36 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         const delphiDeepLabel = delphiDeep ? " | deep" : "";
         await respond(`:brain: *Delphi started* — ${delphiModeLabel} mode | ${delphiWorkerIds.length} worker(s)${delphiContextLabel}${delphiDeepLabel}`);
 
-        // Cost line is the definitive signal that a session has finished.
-        const isWorkerDone = (m: any) => m.text && /^_Done in \d+/.test((m.text as string).trim());
-
-        // Single-line italic messages are tool progress indicators (_run_bash..._).
-        // Use [^\n]* to allow underscores inside tool names.
-        const isProgressMsg = (m: any) => m.text && /^_[^\n]*_$/.test((m.text as string).trim());
-
-        // Fallback for zero-cost adapters: any substantive non-progress bot message.
-        const isWorkerResponse = (m: any) =>
-          m.text &&
-          !isWorkerDone(m) &&
-          !isProgressMsg(m);
-
-        // Wait for all workers to finish by watching each WORKER channel independently.
-        // Uses a simple float comparison against a pre-dispatch epoch (with clock skew buffer)
-        // so we never rely on Slack ts string comparison or the oldest= API parameter.
-        const waitForWorkers = async (afterEpochSec: number): Promise<void> => {
-          const POLL_MS = 5_000;
-          const PHASE_TIMEOUT = delphiDeep ? 20 * 60_000 : (delphiMode !== "code" ? 10 * 60_000 : 5 * 60_000);
-          await Promise.allSettled(
-            delphiWorkerIds.map(async (wId) => {
-              const deadline = Date.now() + PHASE_TIMEOUT;
-              while (Date.now() < deadline) {
-                await new Promise(r => setTimeout(r, POLL_MS));
-                try {
-                  const hist = await app.client.conversations.history({ channel: wId, limit: 10 });
-                  const msgs = (hist.messages || []).filter(
-                    (m: any) => m.bot_id && parseFloat(m.ts) > afterEpochSec && isWorkerDone(m)
-                  );
-                  if (msgs.length > 0) return;
-                } catch { /* ignore */ }
-              }
-            })
-          );
-        };
-
-        // Poll the judge channel for the judge's response.
-        // Uses cost-line detection (same as workers) — waits for _N turns | $X.XXXX_,
-        // then collects all substantive messages (non-cost, non-progress) since afterTs.
-        const pollForJudge = async (afterTs: string): Promise<string> => {
-          const POLL_MS = 10_000;
-          const PHASE_TIMEOUT = 10 * 60_000; // judges do heavy file reading; give them more time
-          const deadline = Date.now() + PHASE_TIMEOUT;
-          const collect = (msgs: any[]) =>
-            msgs
-              .filter((m: any) => !isWorkerDone(m) && !isProgressMsg(m))
-              .reverse()
-              .map((m: any) => m.text)
-              .join("\n\n");
-          while (Date.now() < deadline) {
-            await new Promise(r => setTimeout(r, POLL_MS));
-            try {
-              const hist = await app.client.conversations.history({ channel, oldest: afterTs, limit: 50 });
-              const allMsgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > afterTs);
-              if (allMsgs.some(isWorkerDone)) return collect(allMsgs);
-            } catch { /* ignore */ }
-          }
-          // Timeout: return whatever substantive content we have
-          try {
-            const hist = await app.client.conversations.history({ channel, oldest: afterTs, limit: 50 });
-            const allMsgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > afterTs);
-            return collect(allMsgs);
-          } catch { return ""; }
-        };
-
-        // Helper: collect non-meta bot messages from a worker channel since a given epoch (seconds).
-        // Excludes cost lines and single-line italic progress messages (_run_bash..._).
-        const collectWorkerMessages = async (wId: string, afterEpochSec: number): Promise<string> => {
-          const hist = await app.client.conversations.history({ channel: wId, limit: 50 }).catch(() => ({ messages: [] as any[] }));
-          const msgs = ((hist as any).messages || [])
-            .filter((m: any) => m.bot_id && parseFloat(m.ts) > afterEpochSec && !isWorkerDone(m) && !isProgressMsg(m))
-            .reverse(); // chronological
-          return msgs.map((m: any) => m.text).join("\n\n");
-        };
-
-        // Rate limit callback factory: posts a notice to the judge channel when a worker is throttled.
-        const makeRateLimitNotifier = (wId: string) => (retryInMs: number) => {
-          const secs = Math.round(retryInMs / 1000);
-          app.client.chat.postMessage({ channel, text: `:hourglass: *<#${wId}>* rate limited — retrying in ${secs}s...` }).catch(() => {});
-        };
-
-        const delphiLoop = async () => {
-          const delphiStartMs = Date.now();
-
-          // ── Build context note and think suffix ───────────────────────────
-          const contextNote = delphiContextPath
-            ? `\n\nBefore answering, read this file for background context:\n- ${delphiContextPath}`
-            : "";
-          const thinkSuffix = delphiDeep ? "\n\nThink deeply about this. Write your complete analysis and recommendation in full in your response — do not assume your reasoning is visible to others." : "";
-
-          // ── Phase 1: Workers answer the question ──────────────────────────
-          // Workers respond in their OWN channels — Foreman collects and posts to judge.
-          const workerQ = delphiMode === "research"
-            ? `Your goal is to provide the most complete and accurate answer to this question, drawing on your knowledge and expertise.${contextNote}\n\nEnumerate all relevant options, explain tradeoffs, and cover approaches the questioner may not have considered. Be thorough and specific.\n\nQuestion: ${delphiQuestion}${thinkSuffix}`
-            : delphiMode === "design"
-            ? `Your goal is to propose the best solution to this design problem.${contextNote}\n\nResearch the available options, evaluate them against the real constraints you find, and recommend a specific approach with clear rationale. Consider implementation complexity, risk, and fit with the existing system.\n\nDesign question: ${delphiQuestion}${thinkSuffix}`
-            : /* code */ `Your goal is to provide the best possible answer to this question. This is a fresh, independent request — do not reference anything from prior conversations.${contextNote}\n\nUse your file reading tools (Read, Glob, Grep, Bash) to thoroughly explore the source code in your working directory. Do not answer from memory or general knowledge — ground your answer entirely in what you actually find in the code.\n\nQuestion: ${delphiQuestion}${thinkSuffix}`;
-          await app.client.chat.postMessage({ channel, text: `:satellite: *Phase 1 — dispatching to ${delphiWorkerIds.length} worker(s)...*` });
-
-          // Record epoch BEFORE dispatch with 60s buffer to absorb any clock skew
-          const p1EpochSec = (Date.now() - 60_000) / 1000;
-
-          for (const wId of delphiWorkerIds) {
-            try {
-              await app.client.chat.postMessage({ channel: wId, text: workerQ });
-              processChannelMessage(app, wId, workerQ, "", [], makeRateLimitNotifier(wId), true).catch((err) => {
-                app.client.chat.postMessage({ channel, text: `:x: Worker <#${wId}> error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
-              });
-            } catch (err) {
-              await app.client.chat.postMessage({ channel, text: `:x: Failed to dispatch to <#${wId}>: ${err instanceof Error ? err.message : String(err)}` });
-            }
-          }
-
-          await waitForWorkers(p1EpochSec);
-          await app.client.chat.postMessage({ channel, text: `:white_check_mark: *Workers done — assessing answers...*` });
-
-          // Collect answers from each worker's own channel (silent — not relayed to judge channel)
-          const workerAnswers: Array<{ channelId: string; text: string }> = [];
-          for (const wId of delphiWorkerIds) {
-            const text = await collectWorkerMessages(wId, p1EpochSec);
-            if (text) workerAnswers.push({ channelId: wId, text });
-          }
-
-          if (workerAnswers.length === 0) {
-            await app.client.chat.postMessage({ channel, text: `:warning: No worker answers collected. Delphi stopped after Phase 1.` });
-            return;
-          }
-
-          // ── Phase 1 Judge: Synthesize worker answers ──────────────────────
-          await app.client.chat.postMessage({ channel, text: `:mag: *Phase 1 — judge verifying worker answers...*` });
-          const p1JudgeTs = ((Date.now() - 30_000) / 1000).toFixed(6); // 30s buffer to account for clock skew
-
-          const workerSummary = workerAnswers.map((w, i) => `**Worker ${i + 1} (<#${w.channelId}>):**\n${w.text}`).join("\n\n---\n\n");
-          const judgePrompt1 = delphiMode === "research"
-            ? `${workerAnswers.length} worker(s) researched this question: "${delphiQuestion}"${contextNote}\n\nHere are their answers:\n\n${workerSummary}\n\nYour job is to improve on these answers, not just blend them. Evaluate each for:\n- Completeness: are important options or considerations missing?\n- Accuracy: is any reasoning weak, outdated, or unsupported?\n- Depth: what would a domain expert add?\n\nWrite a comprehensive answer that is better than any individual worker response — filling gaps, correcting weak reasoning, and adding expert-level insight.${thinkSuffix}`
-            : delphiMode === "design"
-            ? `${workerAnswers.length} worker(s) proposed solutions to this design problem: "${delphiQuestion}"${contextNote}\n\nHere are their proposals:\n\n${workerSummary}\n\nYour job is to evaluate FEASIBILITY, not just summarize. For each proposal:\n- Does it actually satisfy the real system constraints?\n- What are the implementation risks?\n- What is missing or underspecified?\n\nThen recommend the strongest approach — or a synthesis of the best elements — with clear rationale grounded in the actual system constraints.${thinkSuffix}`
-            : /* code */ `${workerAnswers.length} worker(s) answered this question: "${delphiQuestion}"\n\nHere are their answers:\n\n${workerSummary}\n\nYour job is NOT to summarize or blend these answers. Your job is to VERIFY every claim against the actual source code.\n\nFor each claim made by the workers:\n- Use Read, Glob, Grep, and Bash to find the relevant code\n- Label it CORRECT (cite the file/line that confirms it), INCORRECT (state what the code actually shows and why the claim is wrong), or INCOMPLETE (confirm what is right, then add what is missing from the code)\n\nAfter verifying all claims, write a final answer containing only what you could confirm in the source code. If a worker claim was wrong, explicitly state why — this helps future reasoning sessions avoid the same mistake.${thinkSuffix}`;
-          processChannelMessage(app, channel, judgePrompt1, "", [], makeRateLimitNotifier(channel), true).catch((err) => {
-            app.client.chat.postMessage({ channel, text: `:x: Phase 1 judge error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
+        // ── Launch Temporal workflow ───────────────────────────────────────
+        try {
+          const { getTemporalClient } = await import("./temporal/client.js");
+          const { delphiWorkflow } = await import("./temporal/workflows.js");
+          const client = await getTemporalClient();
+          const handle = await client.workflow.start(delphiWorkflow, {
+            taskQueue: "foreman",
+            workflowId: `delphi-${channel}-${Date.now()}`,
+            args: [{
+              question: delphiQuestion,
+              workerIds: delphiWorkerIds,
+              judgeChannelId: channel,
+              mode: delphiMode,
+              deep: delphiDeep,
+              contextPath: delphiContextPath,
+              startEpochMs: Date.now(),
+            }],
           });
-
-          const judgeSynthesis = await pollForJudge(p1JudgeTs);
-          if (!judgeSynthesis) {
-            await app.client.chat.postMessage({ channel, text: `:warning: Judge did not respond in time. Delphi stopped after Phase 1.` });
-            return;
-          }
-
-          // ── Phase 2: Workers critique the judge's synthesis ───────────────
-          // Workers respond in their OWN channels — Foreman collects silently.
-          await app.client.chat.postMessage({ channel, text: `:satellite: *Phase 2 — dispatching critiques to ${delphiWorkerIds.length} worker(s)...*` });
-
-          const verifyQ = delphiMode === "research"
-            ? `Your goal is to critically evaluate this research answer and improve it.\n\nThe question was: "${delphiQuestion}"\n\nA judge produced this answer:\n${judgeSynthesis}\n\nIdentify: What important options or considerations are missing? Is any reasoning flawed or unsupported? What would a domain expert add or change? Be specific.${thinkSuffix}`
-            : delphiMode === "design"
-            ? `Your goal is to stress-test this design recommendation.\n\nThe design question was: "${delphiQuestion}"\n\nThe judge recommended:\n${judgeSynthesis}\n\nChallenge this recommendation: Does it actually work given the real constraints? Are there risks the judge underestimated? Are there better alternatives that were overlooked? Be specific and constructive.${thinkSuffix}`
-            : /* code */ `Your goal is to critically evaluate this answer and help produce the best possible final response.\n\nThe question was: "${delphiQuestion}"\n\nA judge produced this answer:\n${judgeSynthesis}\n\nUse your file reading tools (Read, Glob, Grep, Bash) to verify the claims against the actual source code. Be specific: what is correct, what is wrong, and what important details are missing?${thinkSuffix}`;
-          // Record epoch BEFORE dispatch with 60s buffer to absorb any clock skew
-          const p2EpochSec = (Date.now() - 60_000) / 1000;
-
-          for (const wId of delphiWorkerIds) {
-            try {
-              await app.client.chat.postMessage({ channel: wId, text: verifyQ });
-              processChannelMessage(app, wId, verifyQ, "", [], makeRateLimitNotifier(wId), true).catch((err) => {
-                app.client.chat.postMessage({ channel, text: `:x: Verify worker <#${wId}> error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
-              });
-            } catch (err) {
-              await app.client.chat.postMessage({ channel, text: `:x: Failed to dispatch verify to <#${wId}>: ${err instanceof Error ? err.message : String(err)}` });
-            }
-          }
-
-          await waitForWorkers(p2EpochSec);
-          await app.client.chat.postMessage({ channel, text: `:white_check_mark: *Workers done — writing final answer...*` });
-
-          // Collect critiques silently — not relayed to judge channel
-          const workerCritiques: Array<{ channelId: string; text: string }> = [];
-          for (const wId of delphiWorkerIds) {
-            const text = await collectWorkerMessages(wId, p2EpochSec);
-            if (text) workerCritiques.push({ channelId: wId, text });
-          }
-
-          // ── Phase 3: Judge produces final answer ──────────────────────────
-          await app.client.chat.postMessage({ channel, text: `:pencil: *Phase 3 — judge writing final answer...*` });
-
-          const critiqueSummary = workerCritiques.map((w, i) => `**Critique ${i + 1} (<#${w.channelId}>):**\n${w.text}`).join("\n\n---\n\n");
-          const revisePrompt = delphiMode === "research"
-            ? `You produced a research answer to: "${delphiQuestion}"\n\nYour answer:\n\n${judgeSynthesis}\n\nExperts reviewed it and raised these critiques:\n\n${critiqueSummary || "(No critiques received)"}\n\nFor each critique, evaluate whether it is valid. Incorporate legitimate additions and corrections. Produce your final, most complete and accurate answer.${thinkSuffix}`
-            : delphiMode === "design"
-            ? `You produced a design recommendation for: "${delphiQuestion}"\n\nYour recommendation:\n\n${judgeSynthesis}\n\nExperts stress-tested it and raised these challenges:\n\n${critiqueSummary || "(No critiques received)"}\n\nAddress each challenge. Refine your recommendation to account for valid concerns. Produce your final design recommendation with updated rationale.${thinkSuffix}`
-            : /* code */ `You previously verified worker answers to this question: "${delphiQuestion}"\n\nYour verified answer:\n\n${judgeSynthesis}\n\nWorkers have now reviewed your answer and raised these critiques:\n\n${critiqueSummary || "(No critiques received)"}\n\nFor each critique, use Read, Glob, Grep, and Bash to verify it against the actual source code. If the critique is correct, update your answer and explain what was wrong. If the critique is incorrect, state why — citing the code. Then write your final verified answer, grounded entirely in what the code actually shows.${thinkSuffix}`;
-          const elapsedSec = Math.round((Date.now() - delphiStartMs) / 1000);
-          const elapsedStr = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
-          processChannelMessage(app, channel, revisePrompt, "", [], makeRateLimitNotifier(channel), true)
-            .then(() => {
-              app.client.chat.postMessage({ channel, text: `_Delphi complete in ${elapsedStr}_` }).catch(() => {});
-            })
-            .catch((err) => {
-              app.client.chat.postMessage({ channel, text: `:x: Phase 3 error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
-            });
-        };
-
-        delphiLoop().catch((err) => {
-          app.client.chat.postMessage({ channel, text: `:x: Delphi error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
-        });
+          handle.result().catch((err: any) => {
+            app.client.chat.postMessage({
+              channel,
+              text: `:x: Delphi workflow error: ${err instanceof Error ? err.message : String(err)}`,
+            }).catch(() => {});
+          });
+        } catch (err) {
+          await app.client.chat.postMessage({
+            channel,
+            text: `:x: Failed to start Delphi workflow: ${err instanceof Error ? err.message : String(err)}\n\nIs the Temporal server running? Try: \`temporal server start-dev\``,
+          });
+        }
         break;
       }
 
@@ -1230,6 +1061,31 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             text: `:x: Revise error: ${err instanceof Error ? err.message : String(err)}`,
           }).catch(() => {});
         });
+        break;
+      }
+
+      case "workflow": {
+        // /cc workflow hello <name> — run a Temporal workflow
+        const subCommand = args[1];
+        if (subCommand === "hello") {
+          const name = args.slice(2).join(" ") || "World";
+          try {
+            const { getTemporalClient } = await import("./temporal/client.js");
+            const { helloWorkflow } = await import("./temporal/workflows.js");
+            const client = await getTemporalClient();
+            const handle = await client.workflow.start(helloWorkflow, {
+              args: [name],
+              taskQueue: "foreman",
+              workflowId: `hello-${Date.now()}`,
+            });
+            const result = await handle.result();
+            await respond(`:tada: Temporal says: *${result}*`);
+          } catch (err) {
+            await respond(`:x: Temporal error: ${err instanceof Error ? err.message : String(err)}\n\nIs the Temporal server running? Try: \`temporal server start-dev\``);
+          }
+        } else {
+          await respond(`:x: Unknown workflow subcommand. Try: \`/cc workflow hello <name>\``);
+        }
         break;
       }
 
