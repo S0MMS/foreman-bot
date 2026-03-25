@@ -122,7 +122,9 @@ async function processChannelMessage(
   channel: string,
   text: string,
   requesterId: string,
-  imagePaths: string[] = []
+  imagePaths: string[] = [],
+  onRateLimit?: (retryInMs: number) => void,
+  noSlackMcp?: boolean
 ): Promise<void> {
   const state = getState(channel);
 
@@ -171,16 +173,17 @@ async function processChannelMessage(
 
   const mcpServer = createCanvasMcpServer(channel, app);
 
+  const sessionStartMs = Date.now();
   let result;
   if (state.sessionId) {
     try {
-      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
+      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app, onRateLimit, noSlackMcp);
     } catch {
       clearSession(channel);
-      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
+      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app, onRateLimit, noSlackMcp);
     }
   } else {
-    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app);
+    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, app, onRateLimit, noSlackMcp);
   }
   if (result.sessionId) setSessionId(channel, result.sessionId);
 
@@ -193,7 +196,8 @@ async function processChannelMessage(
     await app.client.chat.postMessage({ channel, text: chunk });
   }
   if (result.cost > 0) {
-    await app.client.chat.postMessage({ channel, text: `_${result.turns} turns | $${result.cost.toFixed(4)}_` });
+    const elapsedSec = ((Date.now() - sessionStartMs) / 1000).toFixed(0);
+    await app.client.chat.postMessage({ channel, text: `_${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedSec}s_` });
   }
 }
 
@@ -849,6 +853,274 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
+      case "delphi": {
+        // Fully automated 3-phase Delphi: quorum → verify → revise.
+        // Usage: /cc delphi [--code|--research|--design] [--context=/path] #worker1 #worker2 <question>
+        // This channel's bot is the judge. Same workers used for all 3 phases.
+        // Modes: --code (default) = verify against source; --research = enumerate options;
+        //        --design = evaluate feasibility given real constraints
+
+        // ── Parse flags before channel/question extraction ────────────────
+        type DelphiMode = "code" | "research" | "design";
+        let delphiMode: DelphiMode = "code";
+        let delphiContextPath: string | null = null;
+        let delphiDeep = false;
+        const delphiFilteredArgs: string[] = ["delphi"];
+        for (let i = 1; i < args.length; i++) {
+          if (args[i] === "--code") { delphiMode = "code"; }
+          else if (args[i] === "--research") { delphiMode = "research"; }
+          else if (args[i] === "--design") { delphiMode = "design"; }
+          else if (args[i] === "--deep") { delphiDeep = true; }
+          else if (args[i].startsWith("--context=")) {
+            if (delphiContextPath !== null) {
+              await respond(":x: Only one `--context=` file is supported per Delphi session.");
+              return;
+            }
+            delphiContextPath = args[i].slice("--context=".length);
+          }
+          else { delphiFilteredArgs.push(args[i]); }
+        }
+
+        const delphiListRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+        const resolveDelphiChannel = (raw: string): string | null => {
+          const clean = raw.replace(/,/g, "");
+          const mentionMatch = clean.match(/<#([A-Z0-9]+)/);
+          if (mentionMatch) return mentionMatch[1];
+          if (/^[A-Z0-9]{8,}$/.test(clean)) return clean;
+          const name = clean.startsWith("#") ? clean.slice(1) : clean;
+          const found = (delphiListRes.channels || []).find((c: any) => c.name === name);
+          return found?.id ?? null;
+        };
+
+        const delphiRawChannels: string[] = [];
+        let delphiQIdx = 1;
+        for (let i = 1; i < delphiFilteredArgs.length; i++) {
+          const clean = delphiFilteredArgs[i].replace(/,/g, "");
+          if (/<#[A-Z0-9]+/.test(clean) || /^[A-Z0-9]{8,}$/.test(clean) || clean.startsWith("#")) {
+            delphiRawChannels.push(delphiFilteredArgs[i]);
+            delphiQIdx = i + 1;
+          } else break;
+        }
+        const delphiQuestion = delphiFilteredArgs.slice(delphiQIdx).join(" ").trim();
+
+        if (delphiRawChannels.length < 1 || !delphiQuestion) {
+          await respond(":x: Usage: `/cc delphi [--code|--research|--design] [--context=/path/to/file] #worker1 #worker2 <question>`\nNeed at least 1 worker and a question. This channel's bot is the judge.");
+          return;
+        }
+
+        const delphiWorkerIds = delphiRawChannels
+          .map(resolveDelphiChannel)
+          .filter((id): id is string => id !== null && id !== channel);
+
+        if (delphiWorkerIds.length === 0) {
+          await respond(":x: Need at least one worker channel distinct from this channel.");
+          return;
+        }
+
+        const delphiModeLabel = delphiMode === "research" ? "research" : delphiMode === "design" ? "design" : "code verification";
+        const delphiContextLabel = delphiContextPath ? ` | context: ${delphiContextPath.split("/").pop()}` : "";
+        const delphiDeepLabel = delphiDeep ? " | deep" : "";
+        await respond(`:brain: *Delphi started* — ${delphiModeLabel} mode | ${delphiWorkerIds.length} worker(s)${delphiContextLabel}${delphiDeepLabel}`);
+
+        // Cost line is the definitive signal that a session has finished.
+        const isWorkerDone = (m: any) => m.text && /_\d+ turns \| \$[\d.]+_/.test(m.text);
+
+        // Single-line italic messages are tool progress indicators (_run_bash..._).
+        // Use [^\n]* to allow underscores inside tool names.
+        const isProgressMsg = (m: any) => m.text && /^_[^\n]*_$/.test((m.text as string).trim());
+
+        // Fallback for zero-cost adapters: any substantive non-progress bot message.
+        const isWorkerResponse = (m: any) =>
+          m.text &&
+          !isWorkerDone(m) &&
+          !isProgressMsg(m);
+
+        // Wait for all workers to finish by watching each WORKER channel independently.
+        // Timestamp per worker is recorded AFTER the dispatch message is posted,
+        // so the dispatch message itself is behind the cutoff and won't be counted.
+        const waitForWorkers = async (timestamps: Record<string, string>): Promise<void> => {
+          const POLL_MS = 5_000;
+          // --deep (extended thinking) + research/design mode can take much longer.
+          const PHASE_TIMEOUT = delphiDeep ? 20 * 60_000 : (delphiMode !== "code" ? 10 * 60_000 : 5 * 60_000);
+          await Promise.allSettled(
+            Object.entries(timestamps).map(async ([wId, afterTs]) => {
+              const deadline = Date.now() + PHASE_TIMEOUT;
+              while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, POLL_MS));
+                try {
+                  const hist = await app.client.conversations.history({ channel: wId, oldest: afterTs, limit: 20 });
+                  const msgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > afterTs);
+                  if (msgs.some(isWorkerDone) || msgs.some(isWorkerResponse)) return;
+                } catch { /* ignore */ }
+              }
+            })
+          );
+        };
+
+        // Poll the judge channel for the judge's response.
+        // Uses cost-line detection (same as workers) — waits for _N turns | $X.XXXX_,
+        // then collects all substantive messages (non-cost, non-progress) since afterTs.
+        const pollForJudge = async (afterTs: string): Promise<string> => {
+          const POLL_MS = 10_000;
+          const PHASE_TIMEOUT = 10 * 60_000; // judges do heavy file reading; give them more time
+          const deadline = Date.now() + PHASE_TIMEOUT;
+          const collect = (msgs: any[]) =>
+            msgs
+              .filter((m: any) => !isWorkerDone(m) && !isProgressMsg(m))
+              .reverse()
+              .map((m: any) => m.text)
+              .join("\n\n");
+          while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, POLL_MS));
+            try {
+              const hist = await app.client.conversations.history({ channel, oldest: afterTs, limit: 50 });
+              const allMsgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > afterTs);
+              if (allMsgs.some(isWorkerDone)) return collect(allMsgs);
+            } catch { /* ignore */ }
+          }
+          // Timeout: return whatever substantive content we have
+          try {
+            const hist = await app.client.conversations.history({ channel, oldest: afterTs, limit: 50 });
+            const allMsgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > afterTs);
+            return collect(allMsgs);
+          } catch { return ""; }
+        };
+
+        // Helper: collect non-meta bot messages from a worker channel since a given timestamp.
+        // Excludes cost lines and single-line italic progress messages (_run_bash..._).
+        const collectWorkerMessages = async (wId: string, afterTs: string): Promise<string> => {
+          const hist = await app.client.conversations.history({ channel: wId, oldest: afterTs, limit: 50 }).catch(() => ({ messages: [] as any[] }));
+          const msgs = ((hist as any).messages || [])
+            .filter((m: any) => m.bot_id && m.ts > afterTs && !isWorkerDone(m) && !isProgressMsg(m))
+            .reverse(); // chronological
+          return msgs.map((m: any) => m.text).join("\n\n");
+        };
+
+        // Rate limit callback factory: posts a notice to the judge channel when a worker is throttled.
+        const makeRateLimitNotifier = (wId: string) => (retryInMs: number) => {
+          const secs = Math.round(retryInMs / 1000);
+          app.client.chat.postMessage({ channel, text: `:hourglass: *<#${wId}>* rate limited — retrying in ${secs}s...` }).catch(() => {});
+        };
+
+        const delphiLoop = async () => {
+          const delphiStartMs = Date.now();
+
+          // ── Build context note and think suffix ───────────────────────────
+          const contextNote = delphiContextPath
+            ? `\n\nBefore answering, read this file for background context:\n- ${delphiContextPath}`
+            : "";
+          const thinkSuffix = delphiDeep ? "\n\nThink deeply about this. Write your complete analysis and recommendation in full in your response — do not assume your reasoning is visible to others." : "";
+
+          // ── Phase 1: Workers answer the question ──────────────────────────
+          // Workers respond in their OWN channels — Foreman collects and posts to judge.
+          const workerQ = delphiMode === "research"
+            ? `Your goal is to provide the most complete and accurate answer to this question, drawing on your knowledge and expertise.${contextNote}\n\nEnumerate all relevant options, explain tradeoffs, and cover approaches the questioner may not have considered. Be thorough and specific.\n\nQuestion: ${delphiQuestion}${thinkSuffix}`
+            : delphiMode === "design"
+            ? `Your goal is to propose the best solution to this design problem.${contextNote}\n\nResearch the available options, evaluate them against the real constraints you find, and recommend a specific approach with clear rationale. Consider implementation complexity, risk, and fit with the existing system.\n\nDesign question: ${delphiQuestion}${thinkSuffix}`
+            : /* code */ `Your goal is to provide the best possible answer to this question. This is a fresh, independent request — do not reference anything from prior conversations.${contextNote}\n\nUse your file reading tools (Read, Glob, Grep, Bash) to thoroughly explore the source code in your working directory. Do not answer from memory or general knowledge — ground your answer entirely in what you actually find in the code.\n\nQuestion: ${delphiQuestion}${thinkSuffix}`;
+          const p1WorkerTs: Record<string, string> = {};
+
+          for (const wId of delphiWorkerIds) {
+            try {
+              const p1Post = await app.client.chat.postMessage({ channel: wId, text: workerQ });
+              p1WorkerTs[wId] = (p1Post as any).ts as string; // use Slack's own ts to avoid clock skew
+              processChannelMessage(app, wId, workerQ, "", [], makeRateLimitNotifier(wId), true).catch((err) => {
+                app.client.chat.postMessage({ channel, text: `:x: Worker <#${wId}> error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
+              });
+            } catch (err) {
+              await app.client.chat.postMessage({ channel, text: `:x: Failed to dispatch to <#${wId}>: ${err instanceof Error ? err.message : String(err)}` });
+            }
+          }
+
+          await waitForWorkers(p1WorkerTs);
+
+          // Collect answers from each worker's own channel (silent — not relayed to judge channel)
+          const workerAnswers: Array<{ channelId: string; text: string }> = [];
+          for (const wId of delphiWorkerIds) {
+            const text = await collectWorkerMessages(wId, p1WorkerTs[wId]);
+            if (text) workerAnswers.push({ channelId: wId, text });
+          }
+
+          if (workerAnswers.length === 0) {
+            await app.client.chat.postMessage({ channel, text: `:warning: No worker answers collected. Delphi stopped after Phase 1.` });
+            return;
+          }
+
+          // ── Phase 1 Judge: Synthesize worker answers ──────────────────────
+          const p1JudgeTs = ((Date.now() - 30_000) / 1000).toFixed(6); // 30s buffer to account for clock skew
+
+          const workerSummary = workerAnswers.map((w, i) => `**Worker ${i + 1} (<#${w.channelId}>):**\n${w.text}`).join("\n\n---\n\n");
+          const judgePrompt1 = delphiMode === "research"
+            ? `${workerAnswers.length} worker(s) researched this question: "${delphiQuestion}"${contextNote}\n\nHere are their answers:\n\n${workerSummary}\n\nYour job is to improve on these answers, not just blend them. Evaluate each for:\n- Completeness: are important options or considerations missing?\n- Accuracy: is any reasoning weak, outdated, or unsupported?\n- Depth: what would a domain expert add?\n\nWrite a comprehensive answer that is better than any individual worker response — filling gaps, correcting weak reasoning, and adding expert-level insight.${thinkSuffix}`
+            : delphiMode === "design"
+            ? `${workerAnswers.length} worker(s) proposed solutions to this design problem: "${delphiQuestion}"${contextNote}\n\nHere are their proposals:\n\n${workerSummary}\n\nYour job is to evaluate FEASIBILITY, not just summarize. For each proposal:\n- Does it actually satisfy the real system constraints?\n- What are the implementation risks?\n- What is missing or underspecified?\n\nThen recommend the strongest approach — or a synthesis of the best elements — with clear rationale grounded in the actual system constraints.${thinkSuffix}`
+            : /* code */ `${workerAnswers.length} worker(s) answered this question: "${delphiQuestion}"\n\nHere are their answers:\n\n${workerSummary}\n\nYour job is NOT to summarize or blend these answers. Your job is to VERIFY every claim against the actual source code.\n\nFor each claim made by the workers:\n- Use Read, Glob, Grep, and Bash to find the relevant code\n- Label it CORRECT (cite the file/line that confirms it), INCORRECT (state what the code actually shows and why the claim is wrong), or INCOMPLETE (confirm what is right, then add what is missing from the code)\n\nAfter verifying all claims, write a final answer containing only what you could confirm in the source code. If a worker claim was wrong, explicitly state why — this helps future reasoning sessions avoid the same mistake.${thinkSuffix}`;
+          processChannelMessage(app, channel, judgePrompt1, "", [], makeRateLimitNotifier(channel), true).catch((err) => {
+            app.client.chat.postMessage({ channel, text: `:x: Phase 1 judge error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
+          });
+
+          const judgeSynthesis = await pollForJudge(p1JudgeTs);
+          if (!judgeSynthesis) {
+            await app.client.chat.postMessage({ channel, text: `:warning: Judge did not respond in time. Delphi stopped after Phase 1.` });
+            return;
+          }
+
+          // ── Phase 2: Workers critique the judge's synthesis ───────────────
+          // Workers respond in their OWN channels — Foreman collects silently.
+
+          const verifyQ = delphiMode === "research"
+            ? `Your goal is to critically evaluate this research answer and improve it.\n\nThe question was: "${delphiQuestion}"\n\nA judge produced this answer:\n${judgeSynthesis}\n\nIdentify: What important options or considerations are missing? Is any reasoning flawed or unsupported? What would a domain expert add or change? Be specific.${thinkSuffix}`
+            : delphiMode === "design"
+            ? `Your goal is to stress-test this design recommendation.\n\nThe design question was: "${delphiQuestion}"\n\nThe judge recommended:\n${judgeSynthesis}\n\nChallenge this recommendation: Does it actually work given the real constraints? Are there risks the judge underestimated? Are there better alternatives that were overlooked? Be specific and constructive.${thinkSuffix}`
+            : /* code */ `Your goal is to critically evaluate this answer and help produce the best possible final response.\n\nThe question was: "${delphiQuestion}"\n\nA judge produced this answer:\n${judgeSynthesis}\n\nUse your file reading tools (Read, Glob, Grep, Bash) to verify the claims against the actual source code. Be specific: what is correct, what is wrong, and what important details are missing?${thinkSuffix}`;
+          const p2WorkerTs: Record<string, string> = {};
+
+          for (const wId of delphiWorkerIds) {
+            try {
+              const p2Post = await app.client.chat.postMessage({ channel: wId, text: verifyQ });
+              p2WorkerTs[wId] = (p2Post as any).ts as string; // use Slack's own ts to avoid clock skew
+              processChannelMessage(app, wId, verifyQ, "", [], makeRateLimitNotifier(wId), true).catch((err) => {
+                app.client.chat.postMessage({ channel, text: `:x: Verify worker <#${wId}> error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
+              });
+            } catch (err) {
+              await app.client.chat.postMessage({ channel, text: `:x: Failed to dispatch verify to <#${wId}>: ${err instanceof Error ? err.message : String(err)}` });
+            }
+          }
+
+          await waitForWorkers(p2WorkerTs);
+
+          // Collect critiques silently — not relayed to judge channel
+          const workerCritiques: Array<{ channelId: string; text: string }> = [];
+          for (const wId of delphiWorkerIds) {
+            const text = await collectWorkerMessages(wId, p2WorkerTs[wId]);
+            if (text) workerCritiques.push({ channelId: wId, text });
+          }
+
+          // ── Phase 3: Judge produces final answer ──────────────────────────
+
+          const critiqueSummary = workerCritiques.map((w, i) => `**Critique ${i + 1} (<#${w.channelId}>):**\n${w.text}`).join("\n\n---\n\n");
+          const revisePrompt = delphiMode === "research"
+            ? `You produced a research answer to: "${delphiQuestion}"\n\nYour answer:\n\n${judgeSynthesis}\n\nExperts reviewed it and raised these critiques:\n\n${critiqueSummary || "(No critiques received)"}\n\nFor each critique, evaluate whether it is valid. Incorporate legitimate additions and corrections. Produce your final, most complete and accurate answer.${thinkSuffix}`
+            : delphiMode === "design"
+            ? `You produced a design recommendation for: "${delphiQuestion}"\n\nYour recommendation:\n\n${judgeSynthesis}\n\nExperts stress-tested it and raised these challenges:\n\n${critiqueSummary || "(No critiques received)"}\n\nAddress each challenge. Refine your recommendation to account for valid concerns. Produce your final design recommendation with updated rationale.${thinkSuffix}`
+            : /* code */ `You previously verified worker answers to this question: "${delphiQuestion}"\n\nYour verified answer:\n\n${judgeSynthesis}\n\nWorkers have now reviewed your answer and raised these critiques:\n\n${critiqueSummary || "(No critiques received)"}\n\nFor each critique, use Read, Glob, Grep, and Bash to verify it against the actual source code. If the critique is correct, update your answer and explain what was wrong. If the critique is incorrect, state why — citing the code. Then write your final verified answer, grounded entirely in what the code actually shows.${thinkSuffix}`;
+          const elapsedSec = Math.round((Date.now() - delphiStartMs) / 1000);
+          const elapsedStr = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
+          processChannelMessage(app, channel, revisePrompt, "", [], makeRateLimitNotifier(channel), true)
+            .then(() => {
+              app.client.chat.postMessage({ channel, text: `_Delphi complete in ${elapsedStr}_` }).catch(() => {});
+            })
+            .catch((err) => {
+              app.client.chat.postMessage({ channel, text: `:x: Phase 3 error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
+            });
+        };
+
+        delphiLoop().catch((err) => {
+          app.client.chat.postMessage({ channel, text: `:x: Delphi error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
+        });
+        break;
+      }
+
       case "verify": {
         // Delphi Phase 2: dispatch workers to critique the judge's last response.
         // Usage: /cc verify #worker1 #worker2
@@ -1468,6 +1740,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             "• `/cc implement` — read canvas spec + wireframes, explore codebase, write Swift code",
             "• `/cc message #ch1 #ch2 [message]` — send a message to one or more channels",
             "• `/cc quorum #w1 #w2 <question>` — workers answer and post here; this channel's bot synthesizes",
+            "• `/cc delphi [--code|--research|--design] [--context=/path] [--deep] #w1 #w2 <question>` — fully automated 3-phase Delphi (code, research, or design mode; --deep enables extended thinking and longer timeouts)",
             "• `/cc verify #w1 #w2` — Delphi phase 2: workers critique the judge's last response",
             "• `/cc revise` — Delphi phase 3: judge revises its answer incorporating worker critiques",
             "• `/cc new` — start fresh session (resets model, clears plugins)",

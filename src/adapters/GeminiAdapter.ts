@@ -72,7 +72,7 @@ export class GeminiAdapter implements AgentAdapter {
   }
 
   private async chat(options: AgentOptions & { cwd: string; name: string }): Promise<QueryResult> {
-    const { channelId, prompt, systemPrompt, onProgress, onApprovalNeeded, abortController, cwd, app } = options;
+    const { channelId, prompt, systemPrompt, onProgress, onRateLimit, onApprovalNeeded, abortController, cwd, app } = options;
 
     setRunning(channelId, true);
     if (abortController) setAbortController(channelId, abortController);
@@ -100,6 +100,27 @@ export class GeminiAdapter implements AgentAdapter {
       const history = this.histories.get(channelId)!;
       const chat = generativeModel.startChat({ history });
 
+      // Retry wrapper for 429 rate-limit errors. Parses Google's suggested delay,
+      // notifies the caller via onRateLimit, then waits before retrying.
+      const sendWithRetry = async (message: string | any[]): Promise<any> => {
+        const MAX_RETRIES = 3;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          try {
+            return await chat.sendMessage(message);
+          } catch (err: any) {
+            const is429 = String(err?.message || "").includes("429");
+            if (is429 && attempt < MAX_RETRIES - 1) {
+              const delayMatch = String(err.message).match(/retryDelay['":\s]+(\d+(?:\.\d+)?)s/);
+              const retryMs = delayMatch ? Math.ceil(parseFloat(delayMatch[1])) * 1000 + 1000 : 60_000;
+              onRateLimit?.(retryMs);
+              await new Promise(r => setTimeout(r, retryMs));
+              continue;
+            }
+            throw err;
+          }
+        }
+      };
+
       let finalText = "";
       let turns = 0;
       let currentMessage: string | any[] = prompt;
@@ -109,7 +130,7 @@ export class GeminiAdapter implements AgentAdapter {
         if (abortController?.signal.aborted) break;
         turns++;
 
-        const response = await chat.sendMessage(currentMessage);
+        const response = await sendWithRetry(currentMessage);
         const candidate = response.response.candidates?.[0];
         if (!candidate || !candidate.content) {
           // Blocked or empty response — use promptFeedback text if available
@@ -117,7 +138,7 @@ export class GeminiAdapter implements AgentAdapter {
           break;
         }
 
-        const parts = candidate.content.parts ?? [];
+        const parts: any[] = candidate.content.parts ?? [];
         const functionCalls = parts.filter((p) => p.functionCall);
         const textParts = parts.filter((p) => p.text).map((p) => p.text || "");
 
@@ -134,7 +155,7 @@ export class GeminiAdapter implements AgentAdapter {
           const argMap = (toolArgs || {}) as Record<string, unknown>;
 
           let result: string;
-          if (APPROVAL_REQUIRED.has(name)) {
+          if (APPROVAL_REQUIRED.has(name) && !getState(channelId).autoApprove) {
             const approval = await onApprovalNeeded(name, argMap);
             if (!approval.approved) {
               result = "User denied this action.";

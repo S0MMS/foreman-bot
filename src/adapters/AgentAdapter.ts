@@ -17,9 +17,11 @@ export interface AgentOptions {
   systemPrompt: string;
   imagePaths?: string[];
   mcpServer?: McpSdkServerConfig & { instance: any };
+  noSlackMcp?: boolean;
   app?: App;
   onMessage?: OnMessage;
   onProgress?: OnProgress;
+  onRateLimit?: (retryInMs: number) => void;
   onApprovalNeeded: OnApprovalNeeded;
   onSessionId?: (sessionId: string) => void;
   abortController?: AbortController;

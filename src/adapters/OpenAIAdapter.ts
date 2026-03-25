@@ -454,7 +454,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     if (!app) return "PostMessage requires Slack app context.";
     try {
       let target = args.channel as string;
-      if (!target.match(/^[A-Z0-9]{8,}$/)) {
+      const mentionMatch = target.match(/<#([A-Z0-9]+)/);
+      if (mentionMatch) {
+        target = mentionMatch[1];
+      } else if (!target.match(/^[A-Z0-9]{8,}$/)) {
         const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
         const found = (listRes.channels || []).find((c: any) => c.name === target.replace(/^#/, ""));
         if (found?.id) target = found.id;
@@ -471,7 +474,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     if (!app) return "ReadChannel requires Slack app context.";
     try {
       let target = args.channel as string;
-      if (!target.match(/^[A-Z0-9]{8,}$/)) {
+      const mentionMatch = target.match(/<#([A-Z0-9]+)/);
+      if (mentionMatch) {
+        target = mentionMatch[1];
+      } else if (!target.match(/^[A-Z0-9]{8,}$/)) {
         const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
         const found = (listRes.channels || []).find((c: any) => c.name === target.replace(/^#/, ""));
         if (found?.id) target = found.id;
@@ -610,7 +616,7 @@ export class OpenAIAdapter implements AgentAdapter {
           const toolArgs = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
 
           let result: string;
-          if (APPROVAL_REQUIRED.has(toolName)) {
+          if (APPROVAL_REQUIRED.has(toolName) && !getState(channelId).autoApprove) {
             const approval = await onApprovalNeeded(toolName, toolArgs);
             if (!approval.approved) {
               result = "User denied this action.";

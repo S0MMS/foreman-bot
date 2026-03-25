@@ -87,7 +87,8 @@ function buildProgressHooks(onProgress: AgentOptions["onProgress"]) {
  * user-level MCP servers (like the official Slack MCP).
  */
 function buildMcpServers(
-  canvasMcp?: AgentOptions["mcpServer"]
+  canvasMcp?: AgentOptions["mcpServer"],
+  noSlackMcp?: boolean
 ): Record<string, any> | undefined {
   const servers: Record<string, any> = {};
 
@@ -95,12 +96,15 @@ function buildMcpServers(
     servers["foreman-toolbelt"] = canvasMcp;
   }
 
-  // Include the official Slack MCP (authenticated via Claude Code's OAuth proxy)
-  servers["slack"] = {
-    type: "claudeai-proxy",
-    url: "https://mcp.slack.com/mcp",
-    id: "slack",
-  };
+  // Include the official Slack MCP (authenticated via Claude Code's OAuth proxy).
+  // Disabled for focused sessions like Delphi where it adds noise and distracts from code research.
+  if (!noSlackMcp) {
+    servers["slack"] = {
+      type: "claudeai-proxy",
+      url: "https://mcp.slack.com/mcp",
+      id: "slack",
+    };
+  }
 
   return Object.keys(servers).length > 0 ? servers : undefined;
 }
@@ -182,7 +186,7 @@ export class AnthropicAdapter implements AgentAdapter {
             append: systemPrompt,
           },
           canUseTool: createCanUseTool(channelId, onApprovalNeeded),
-          mcpServers: buildMcpServers(mcpServer),
+          mcpServers: buildMcpServers(mcpServer, options.noSlackMcp),
           hooks: onProgress ? { PreToolUse: buildProgressHooks(onProgress) } : undefined,
           stderr: (data: string) => {
             console.error("[claude stderr]", data);
@@ -245,7 +249,7 @@ export class AnthropicAdapter implements AgentAdapter {
             append: systemPrompt,
           },
           canUseTool: createCanUseTool(channelId, onApprovalNeeded),
-          mcpServers: buildMcpServers(mcpServer),
+          mcpServers: buildMcpServers(mcpServer, options.noSlackMcp),
           hooks: onProgress ? { PreToolUse: buildProgressHooks(onProgress) } : undefined,
           stderr: (data: string) => {
             console.error("[claude stderr]", data);
