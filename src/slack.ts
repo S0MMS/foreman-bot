@@ -196,8 +196,9 @@ async function processChannelMessage(
     await app.client.chat.postMessage({ channel, text: chunk });
   }
   if (result.cost > 0) {
-    const elapsedSec = ((Date.now() - sessionStartMs) / 1000).toFixed(0);
-    await app.client.chat.postMessage({ channel, text: `_${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedSec}s_` });
+    const totalSec = Math.round((Date.now() - sessionStartMs) / 1000);
+    const elapsedStr = totalSec >= 60 ? `${Math.floor(totalSec / 60)}m ${totalSec % 60}s` : `${totalSec}s`;
+    await app.client.chat.postMessage({ channel, text: `_Done in ${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedStr}_` });
   }
 }
 
@@ -923,7 +924,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         await respond(`:brain: *Delphi started* — ${delphiModeLabel} mode | ${delphiWorkerIds.length} worker(s)${delphiContextLabel}${delphiDeepLabel}`);
 
         // Cost line is the definitive signal that a session has finished.
-        const isWorkerDone = (m: any) => m.text && /_\d+ turns \| \$[\d.]+_/.test(m.text);
+        const isWorkerDone = (m: any) => m.text && /^_Done in \d+/.test((m.text as string).trim());
 
         // Single-line italic messages are tool progress indicators (_run_bash..._).
         // Use [^\n]* to allow underscores inside tool names.
@@ -936,21 +937,22 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           !isProgressMsg(m);
 
         // Wait for all workers to finish by watching each WORKER channel independently.
-        // Timestamp per worker is recorded AFTER the dispatch message is posted,
-        // so the dispatch message itself is behind the cutoff and won't be counted.
-        const waitForWorkers = async (timestamps: Record<string, string>): Promise<void> => {
+        // Uses a simple float comparison against a pre-dispatch epoch (with clock skew buffer)
+        // so we never rely on Slack ts string comparison or the oldest= API parameter.
+        const waitForWorkers = async (afterEpochSec: number): Promise<void> => {
           const POLL_MS = 5_000;
-          // --deep (extended thinking) + research/design mode can take much longer.
           const PHASE_TIMEOUT = delphiDeep ? 20 * 60_000 : (delphiMode !== "code" ? 10 * 60_000 : 5 * 60_000);
           await Promise.allSettled(
-            Object.entries(timestamps).map(async ([wId, afterTs]) => {
+            delphiWorkerIds.map(async (wId) => {
               const deadline = Date.now() + PHASE_TIMEOUT;
               while (Date.now() < deadline) {
                 await new Promise(r => setTimeout(r, POLL_MS));
                 try {
-                  const hist = await app.client.conversations.history({ channel: wId, oldest: afterTs, limit: 20 });
-                  const msgs = (hist.messages || []).filter((m: any) => m.bot_id && m.ts > afterTs);
-                  if (msgs.some(isWorkerDone) || msgs.some(isWorkerResponse)) return;
+                  const hist = await app.client.conversations.history({ channel: wId, limit: 10 });
+                  const msgs = (hist.messages || []).filter(
+                    (m: any) => m.bot_id && parseFloat(m.ts) > afterEpochSec && isWorkerDone(m)
+                  );
+                  if (msgs.length > 0) return;
                 } catch { /* ignore */ }
               }
             })
@@ -986,12 +988,12 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           } catch { return ""; }
         };
 
-        // Helper: collect non-meta bot messages from a worker channel since a given timestamp.
+        // Helper: collect non-meta bot messages from a worker channel since a given epoch (seconds).
         // Excludes cost lines and single-line italic progress messages (_run_bash..._).
-        const collectWorkerMessages = async (wId: string, afterTs: string): Promise<string> => {
-          const hist = await app.client.conversations.history({ channel: wId, oldest: afterTs, limit: 50 }).catch(() => ({ messages: [] as any[] }));
+        const collectWorkerMessages = async (wId: string, afterEpochSec: number): Promise<string> => {
+          const hist = await app.client.conversations.history({ channel: wId, limit: 50 }).catch(() => ({ messages: [] as any[] }));
           const msgs = ((hist as any).messages || [])
-            .filter((m: any) => m.bot_id && m.ts > afterTs && !isWorkerDone(m) && !isProgressMsg(m))
+            .filter((m: any) => m.bot_id && parseFloat(m.ts) > afterEpochSec && !isWorkerDone(m) && !isProgressMsg(m))
             .reverse(); // chronological
           return msgs.map((m: any) => m.text).join("\n\n");
         };
@@ -1018,12 +1020,14 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             : delphiMode === "design"
             ? `Your goal is to propose the best solution to this design problem.${contextNote}\n\nResearch the available options, evaluate them against the real constraints you find, and recommend a specific approach with clear rationale. Consider implementation complexity, risk, and fit with the existing system.\n\nDesign question: ${delphiQuestion}${thinkSuffix}`
             : /* code */ `Your goal is to provide the best possible answer to this question. This is a fresh, independent request — do not reference anything from prior conversations.${contextNote}\n\nUse your file reading tools (Read, Glob, Grep, Bash) to thoroughly explore the source code in your working directory. Do not answer from memory or general knowledge — ground your answer entirely in what you actually find in the code.\n\nQuestion: ${delphiQuestion}${thinkSuffix}`;
-          const p1WorkerTs: Record<string, string> = {};
+          await app.client.chat.postMessage({ channel, text: `:satellite: *Phase 1 — dispatching to ${delphiWorkerIds.length} worker(s)...*` });
+
+          // Record epoch BEFORE dispatch with 60s buffer to absorb any clock skew
+          const p1EpochSec = (Date.now() - 60_000) / 1000;
 
           for (const wId of delphiWorkerIds) {
             try {
-              const p1Post = await app.client.chat.postMessage({ channel: wId, text: workerQ });
-              p1WorkerTs[wId] = (p1Post as any).ts as string; // use Slack's own ts to avoid clock skew
+              await app.client.chat.postMessage({ channel: wId, text: workerQ });
               processChannelMessage(app, wId, workerQ, "", [], makeRateLimitNotifier(wId), true).catch((err) => {
                 app.client.chat.postMessage({ channel, text: `:x: Worker <#${wId}> error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
               });
@@ -1032,12 +1036,13 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             }
           }
 
-          await waitForWorkers(p1WorkerTs);
+          await waitForWorkers(p1EpochSec);
+          await app.client.chat.postMessage({ channel, text: `:white_check_mark: *Workers done — assessing answers...*` });
 
           // Collect answers from each worker's own channel (silent — not relayed to judge channel)
           const workerAnswers: Array<{ channelId: string; text: string }> = [];
           for (const wId of delphiWorkerIds) {
-            const text = await collectWorkerMessages(wId, p1WorkerTs[wId]);
+            const text = await collectWorkerMessages(wId, p1EpochSec);
             if (text) workerAnswers.push({ channelId: wId, text });
           }
 
@@ -1047,6 +1052,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           }
 
           // ── Phase 1 Judge: Synthesize worker answers ──────────────────────
+          await app.client.chat.postMessage({ channel, text: `:mag: *Phase 1 — judge verifying worker answers...*` });
           const p1JudgeTs = ((Date.now() - 30_000) / 1000).toFixed(6); // 30s buffer to account for clock skew
 
           const workerSummary = workerAnswers.map((w, i) => `**Worker ${i + 1} (<#${w.channelId}>):**\n${w.text}`).join("\n\n---\n\n");
@@ -1067,18 +1073,19 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
 
           // ── Phase 2: Workers critique the judge's synthesis ───────────────
           // Workers respond in their OWN channels — Foreman collects silently.
+          await app.client.chat.postMessage({ channel, text: `:satellite: *Phase 2 — dispatching critiques to ${delphiWorkerIds.length} worker(s)...*` });
 
           const verifyQ = delphiMode === "research"
             ? `Your goal is to critically evaluate this research answer and improve it.\n\nThe question was: "${delphiQuestion}"\n\nA judge produced this answer:\n${judgeSynthesis}\n\nIdentify: What important options or considerations are missing? Is any reasoning flawed or unsupported? What would a domain expert add or change? Be specific.${thinkSuffix}`
             : delphiMode === "design"
             ? `Your goal is to stress-test this design recommendation.\n\nThe design question was: "${delphiQuestion}"\n\nThe judge recommended:\n${judgeSynthesis}\n\nChallenge this recommendation: Does it actually work given the real constraints? Are there risks the judge underestimated? Are there better alternatives that were overlooked? Be specific and constructive.${thinkSuffix}`
             : /* code */ `Your goal is to critically evaluate this answer and help produce the best possible final response.\n\nThe question was: "${delphiQuestion}"\n\nA judge produced this answer:\n${judgeSynthesis}\n\nUse your file reading tools (Read, Glob, Grep, Bash) to verify the claims against the actual source code. Be specific: what is correct, what is wrong, and what important details are missing?${thinkSuffix}`;
-          const p2WorkerTs: Record<string, string> = {};
+          // Record epoch BEFORE dispatch with 60s buffer to absorb any clock skew
+          const p2EpochSec = (Date.now() - 60_000) / 1000;
 
           for (const wId of delphiWorkerIds) {
             try {
-              const p2Post = await app.client.chat.postMessage({ channel: wId, text: verifyQ });
-              p2WorkerTs[wId] = (p2Post as any).ts as string; // use Slack's own ts to avoid clock skew
+              await app.client.chat.postMessage({ channel: wId, text: verifyQ });
               processChannelMessage(app, wId, verifyQ, "", [], makeRateLimitNotifier(wId), true).catch((err) => {
                 app.client.chat.postMessage({ channel, text: `:x: Verify worker <#${wId}> error: ${err instanceof Error ? err.message : String(err)}` }).catch(() => {});
               });
@@ -1087,16 +1094,18 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             }
           }
 
-          await waitForWorkers(p2WorkerTs);
+          await waitForWorkers(p2EpochSec);
+          await app.client.chat.postMessage({ channel, text: `:white_check_mark: *Workers done — writing final answer...*` });
 
           // Collect critiques silently — not relayed to judge channel
           const workerCritiques: Array<{ channelId: string; text: string }> = [];
           for (const wId of delphiWorkerIds) {
-            const text = await collectWorkerMessages(wId, p2WorkerTs[wId]);
+            const text = await collectWorkerMessages(wId, p2EpochSec);
             if (text) workerCritiques.push({ channelId: wId, text });
           }
 
           // ── Phase 3: Judge produces final answer ──────────────────────────
+          await app.client.chat.postMessage({ channel, text: `:pencil: *Phase 3 — judge writing final answer...*` });
 
           const critiqueSummary = workerCritiques.map((w, i) => `**Critique ${i + 1} (<#${w.channelId}>):**\n${w.text}`).join("\n\n---\n\n");
           const revisePrompt = delphiMode === "research"
@@ -1161,7 +1170,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
 
         // Fetch the judge's last bot message from this channel.
         // Skip cost/metadata lines like "_1 turns | $0.2251_" — those are posted after every response.
-        const isMeta = (text: string) => /_\d+ turns \| \$[\d.]+_/.test(text);
+        const isMeta = (text: string) => /^_Done in \d+/.test(text.trim());
         const verifyHist = await app.client.conversations.history({ channel, limit: 20 }).catch(() => ({ messages: [] }));
         const lastBotMsg = (verifyHist.messages || []).find((m: any) => m.bot_id && m.text && !isMeta(m.text));
         if (!lastBotMsg) {
@@ -1196,7 +1205,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         // Delphi Phase 3: judge revises its answer based on worker critiques.
         // Usage: /cc revise (no args — reads recent bot messages from this channel)
 
-        const isMetaMsg = (text: string) => /_\d+ turns \| \$[\d.]+_/.test(text);
+        const isMetaMsg = (text: string) => /^_Done in \d+/.test(text.trim());
         const reviseHist = await app.client.conversations.history({ channel, limit: 20 }).catch(() => ({ messages: [] }));
         const botMsgs = (reviseHist.messages || [])
           .filter((m: any) => m.bot_id && m.text && !isMetaMsg(m.text))
