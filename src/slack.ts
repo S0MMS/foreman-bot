@@ -8,6 +8,26 @@ import { dirname, isAbsolute, join, resolve } from "path";
 import { randomUUID } from "crypto";
 import { createRequire } from "module";
 
+/** Parse a string into args respecting double/single quotes (shell-style). */
+function parseShellArgs(text: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inDouble = false;
+  let inSingle = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (/\s/.test(ch) && !inDouble && !inSingle) {
+      if (current) { result.push(current); current = ""; }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) result.push(current);
+  return result;
+}
+
 const _require = createRequire(import.meta.url);
 const FOREMAN_VERSION: string = _require("../package.json").version;
 
@@ -1187,8 +1207,11 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
       }
 
       case "run": {
-        // /cc run <file.flow|canvas> [workflow_name] — run a FlowSpec workflow via Temporal
-        const flowFile = args[1];
+        // /cc run <file.flow|canvas> "workflow name" key=value — run a FlowSpec workflow via Temporal
+        // Re-parse with quote awareness so names like "Hello World" and values like topic="Hot rods" work
+        const runArgs = parseShellArgs(command.text.trim());
+        // runArgs[0] = "run", runArgs[1] = file, runArgs[2] = workflow name, runArgs[3..] = key=value
+        const flowFile = runArgs[1];
         if (!flowFile) {
           await respond(`:x: Usage: \`/cc run <file.flow> [workflow_name]\`\nor: \`/cc run canvas [workflow_name]\` (reads FlowSpec from channel canvas)`);
           break;
@@ -1245,7 +1268,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
 
           // Parse the FlowSpec source
           const workflows = parseFlowSpec(source);
-          const workflowName = args[2] || workflows[0].name;
+          const workflowName = runArgs[2] || workflows[0].name;
           const workflow = workflows.find((w: any) => w.name === workflowName);
           if (!workflow) {
             await respond(`:x: Workflow "${workflowName}" not found in ${flowFile}.\nAvailable: ${workflows.map((w: any) => w.name).join(", ")}`);
@@ -1285,7 +1308,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           for (const inp of workflow.inputs || []) {
             if (inp.defaultValue !== undefined) inputs[inp.name] = inp.defaultValue;
           }
-          for (const arg of args.slice(3)) {
+          for (const arg of runArgs.slice(3)) {
             const eq = arg.indexOf("=");
             if (eq > 0) {
               inputs[arg.slice(0, eq)] = arg.slice(eq + 1);
