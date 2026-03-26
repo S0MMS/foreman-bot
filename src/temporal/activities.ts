@@ -49,7 +49,7 @@ export async function postCompletion(channelId: string, startEpochMs: number): P
     elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
   await app.client.chat.postMessage({
     channel: channelId,
-    text: `_Delphi complete in ${elapsedStr}_`,
+    text: `:white_check_mark: *Delphi complete in ${elapsedStr}*`,
   });
 }
 

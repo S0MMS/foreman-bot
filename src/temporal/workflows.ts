@@ -186,7 +186,7 @@ export async function delphiWorkflow(params: DelphiWorkflowParams): Promise<void
   const workerCritiques = await collectWorkerMessages(workerIds, p2Epoch);
 
   // ── Phase 3: Judge revises ───────────────────────────────────────────────────
-  await postStatus(judgeChannelId, `:pencil: *Phase 3 — judge writing final answer...*`);
+  await postStatus(judgeChannelId, `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n:checkered_flag:  *FINAL ANSWER*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   const p3jEpoch = await getEpochSec();
   await runClaudeInChannel(
     judgeChannelId,
