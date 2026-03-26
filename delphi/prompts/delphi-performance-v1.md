@@ -5,6 +5,11 @@
 
 ---
 
+## Setup
+
+- **Workers:** `#WORKER_1`, `#WORKER_2`, `#WORKER_3`
+- **Judge:** run the command from the judge channel
+
 ## Prompt
 
 ```
