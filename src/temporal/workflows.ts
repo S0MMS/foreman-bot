@@ -121,6 +121,9 @@ const { dispatchToBot } = proxyActivities<typeof activities>({
   heartbeatTimeout: '60 seconds',
 });
 
+// Re-export the FlowSpec interpreter workflow
+export { flowspecWorkflow, approvalSignal } from '../flowspec/compiler.js';
+
 // ── Workflows ─────────────────────────────────────────────────────────────────
 
 /** Hello workflow — simplest possible example. */

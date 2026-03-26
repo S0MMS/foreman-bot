@@ -16,7 +16,7 @@ FlowSpec is a minimal workflow DSL for orchestrating AI bots that compiles to Te
 |-------|------|--------|----------|-------|
 | 1 | `dispatchToBot` activity | **Done** (2026-03-26) | ~30 lines | Tested via `/cc workflow flowspec-test` |
 | 2 | Parser (`.flow` text -> AST) | **Done** (2026-03-26) | ~660 lines | Hand-written recursive descent in `src/flowspec/parser.ts` |
-| 3 | Compiler (AST -> Temporal TypeScript) | Not started | ~500-800 lines | Includes `means` operator two-pass logic |
+| 3 | Compiler (AST -> Temporal TypeScript) | **Done** (2026-03-26) | ~340 lines | Interpreter in `src/flowspec/compiler.ts` — all 10 primitives + `means` two-pass |
 | 4 | `/cc run` + `/cc check` + bot registry | Not started | ~100 lines | Slack commands + `bots.json` config |
 | 5 | First `.flow` file | Not started | — | Test generation workflow (TECHOPS-2186) |
 | 6 | Bot pools + shared bot mutex | Deferred | — | Not needed yet — each workflow gets its own bot |

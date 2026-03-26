@@ -4,7 +4,7 @@ workflow "code_review"
 
   ask @analyzer "Summarize this PR: {pr_url}" -> summary
 
-  for each reviewer in {reviewers}, collect reviews
+  for each reviewer in {reviewers}, collect {review} as reviews
     ask @reviewer "Review this PR summary:\n{summary}\nProvide feedback." -> review
 
   repeat until {consensus} means "all reviewers agree", at most 3 times
