@@ -1186,6 +1186,168 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         break;
       }
 
+      case "run": {
+        // /cc run <file.flow> [workflow_name] — run a FlowSpec workflow via Temporal
+        const flowFile = args[1];
+        if (!flowFile) {
+          await respond(`:x: Usage: \`/cc run <file.flow> [workflow_name]\`\nExample: \`/cc run workflows/review.flow\``);
+          break;
+        }
+        try {
+          const { resolve, isAbsolute } = await import("path");
+          const { readFileSync, existsSync } = await import("fs");
+          const { parseFlowSpec } = await import("./flowspec/parser.js");
+          const { loadBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");
+          const { getTemporalClient } = await import("./temporal/client.js");
+          const { flowspecWorkflow } = await import("./temporal/workflows.js");
+
+          // Resolve file path relative to channel cwd
+          const session = getState(channel);
+          const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, flowFile);
+          if (!existsSync(filePath)) {
+            await respond(`:x: File not found: \`${filePath}\``);
+            break;
+          }
+
+          // Parse the .flow file
+          const source = readFileSync(filePath, "utf-8");
+          const workflows = parseFlowSpec(source);
+          const workflowName = args[2] || workflows[0].name;
+          const workflow = workflows.find((w: any) => w.name === workflowName);
+          if (!workflow) {
+            await respond(`:x: Workflow "${workflowName}" not found in ${flowFile}.\nAvailable: ${workflows.map((w: any) => w.name).join(", ")}`);
+            break;
+          }
+
+          // Load bot registry
+          const botRegistry = loadBotRegistry();
+          if (Object.keys(botRegistry).length === 0) {
+            await respond(`:x: No bots registered. Create \`${getRegistryPath()}\` with bot name → channel ID mappings.\nExample:\n\`\`\`{"writer": "C0ABC123", "reviewer": "C0DEF456"}\`\`\``);
+            break;
+          }
+
+          // Check that all bots referenced in the workflow are in the registry
+          const missingBots: string[] = [];
+          const checkBots = (steps: any[]) => {
+            for (const step of steps) {
+              if (step.type === "ask" && step.bot && !botRegistry[step.bot]) missingBots.push(step.bot);
+              if (step.body) checkBots(step.body);
+              if (step.otherwise) checkBots(step.otherwise);
+              if (step.otherwiseIfs) step.otherwiseIfs.forEach((b: any) => checkBots(b.body));
+              if (step.branches) step.branches.forEach((b: any) => checkBots(b));
+              if (step.failHandler) checkBots(step.failHandler);
+              if (step.rejectHandler) checkBots(step.rejectHandler);
+              if (step.noConvergeHandler) checkBots(step.noConvergeHandler);
+            }
+          };
+          checkBots(workflow.steps);
+          if (missingBots.length > 0) {
+            const unique = [...new Set(missingBots)];
+            await respond(`:x: Missing bot(s) in registry: ${unique.map(b => `\`@${b}\``).join(", ")}\nAdd them to \`${getRegistryPath()}\`\nRegistered: ${Object.keys(botRegistry).join(", ") || "(none)"}`);
+            break;
+          }
+
+          // Collect inputs from remaining args (key=value pairs)
+          const inputs: Record<string, string> = {};
+          for (const arg of args.slice(3)) {
+            const eq = arg.indexOf("=");
+            if (eq > 0) {
+              inputs[arg.slice(0, eq)] = arg.slice(eq + 1);
+            }
+          }
+
+          // Start the workflow
+          const client = await getTemporalClient();
+          const workflowId = `flowspec-${workflowName}-${Date.now()}`;
+          const handle = await client.workflow.start(flowspecWorkflow, {
+            args: [workflows, workflowName, inputs, botRegistry, channel],
+            taskQueue: "foreman",
+            workflowId,
+          });
+
+          await respond(`:rocket: *FlowSpec started!*\n*Workflow:* ${workflowName}\n*ID:* \`${workflowId}\`\n*Bots:* ${Object.keys(botRegistry).filter(b => !missingBots.includes(b)).join(", ")}\n\nUse \`/cc check ${workflowId}\` to check status.`);
+        } catch (err) {
+          await respond(`:x: FlowSpec error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        break;
+      }
+
+      case "check": {
+        // /cc check [workflowId] — check status of a FlowSpec workflow
+        const workflowId = args[1];
+        if (!workflowId) {
+          await respond(`:x: Usage: \`/cc check <workflowId>\``);
+          break;
+        }
+        try {
+          const { getTemporalClient } = await import("./temporal/client.js");
+          const client = await getTemporalClient();
+          const handle = client.workflow.getHandle(workflowId);
+          const desc = await handle.describe();
+          const status = desc.status?.name || "UNKNOWN";
+
+          if (status === "COMPLETED") {
+            const result = await handle.result();
+            const varKeys = Object.keys(result).filter(k => !k.startsWith("__"));
+            const preview = varKeys.slice(0, 5).map(k => {
+              const v = result[k];
+              const truncated = v.length > 200 ? v.slice(0, 200) + "..." : v;
+              return `*${k}:* ${truncated}`;
+            }).join("\n");
+            await respond(`:white_check_mark: *${workflowId}*: ${status}\n\n${preview || "(no output variables)"}`);
+          } else if (status === "FAILED") {
+            let failure = "unknown error";
+            try { failure = (await handle.result()) as any; } catch (e: any) { failure = e.message || String(e); }
+            await respond(`:x: *${workflowId}*: ${status}\n${failure}`);
+          } else {
+            await respond(`:hourglass: *${workflowId}*: ${status}\nStarted: ${desc.startTime?.toISOString() || "?"}`);
+          }
+        } catch (err) {
+          await respond(`:x: Check error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        break;
+      }
+
+      case "bots": {
+        // /cc bots — list or manage bot registry
+        const sub = args[1];
+        if (sub === "add" && args[2] && args[3]) {
+          // /cc bots add <name> <channelId or #channel>
+          const { loadBotRegistry, saveBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");
+          const registry = loadBotRegistry();
+          const name = args[2].replace(/^@/, "");
+          let channelId = args[3];
+          const mentionMatch = channelId.match(/^<#([A-Z0-9]+)/i);
+          if (mentionMatch) channelId = mentionMatch[1];
+          registry[name] = channelId;
+          saveBotRegistry(registry);
+          await respond(`:white_check_mark: Registered bot \`@${name}\` → \`${channelId}\``);
+        } else if (sub === "remove" && args[2]) {
+          const { loadBotRegistry, saveBotRegistry } = await import("./flowspec/registry.js");
+          const registry = loadBotRegistry();
+          const name = args[2].replace(/^@/, "");
+          if (registry[name]) {
+            delete registry[name];
+            saveBotRegistry(registry);
+            await respond(`:white_check_mark: Removed bot \`@${name}\``);
+          } else {
+            await respond(`:x: Bot \`@${name}\` not found in registry`);
+          }
+        } else {
+          // List all bots
+          const { loadBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");
+          const registry = loadBotRegistry();
+          const entries = Object.entries(registry);
+          if (entries.length === 0) {
+            await respond(`:clipboard: No bots registered.\nAdd with: \`/cc bots add <name> #channel\`\nConfig: \`${getRegistryPath()}\``);
+          } else {
+            const list = entries.map(([name, id]) => `\`@${name}\` → \`${id}\``).join("\n");
+            await respond(`:robot_face: *Bot Registry* (${entries.length}):\n${list}\n\nAdd: \`/cc bots add <name> #channel\`\nRemove: \`/cc bots remove <name>\``);
+          }
+        }
+        break;
+      }
+
       case "reboot": {
         await respond(":recycle: Rebooting Foreman...");
         // Give Slack time to deliver the response, then exit.
