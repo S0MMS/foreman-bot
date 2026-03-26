@@ -13,7 +13,7 @@
 ## Prompt
 
 ```
-/cc delphi --design --deep --context /Users/chris.shreve/claude-slack-bridge/docs/flowspec.md "Critically evaluate and improve FlowSpec — a minimal workflow DSL for orchestrating AI bots that compiles to Temporal workflows.
+/cc delphi --design --deep --context=/Users/chris.shreve/claude-slack-bridge/docs/flowspec.md #WORKER_1 #WORKER_2 #WORKER_3 "Critically evaluate and improve FlowSpec — a minimal workflow DSL for orchestrating AI bots that compiles to Temporal workflows.
 
 The PRIMARY purpose of FlowSpec, in strict priority order:
 1. 80% of real-world workflow scenarios involving AI can be expressed in it — this is the most important goal

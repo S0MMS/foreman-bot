@@ -13,7 +13,7 @@
 ## Prompt
 
 ```
-/cc delphi --research --deep "I am rewriting the entire MyFitnessPal iOS and Android apps from scratch using 100% AI bots. The two non-negotiable constraints are: (1) native — Swift for iOS, Kotlin for Android, and (2) maximum simplicity — the codebase must be as simple as possible so that AI bots can develop features efficiently and correctly.
+/cc delphi --research --deep #WORKER_1 #WORKER_2 #WORKER_3 "I am rewriting the entire MyFitnessPal iOS and Android apps from scratch using 100% AI bots. The two non-negotiable constraints are: (1) native — Swift for iOS, Kotlin for Android, and (2) maximum simplicity — the codebase must be as simple as possible so that AI bots can develop features efficiently and correctly.
 
 I am not asking you to solve this problem. I am asking you to identify the RIGHT QUESTIONS I should be asking.
 

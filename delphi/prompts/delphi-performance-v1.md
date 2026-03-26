@@ -13,7 +13,7 @@
 ## Prompt
 
 ```
-/cc delphi --design --deep "How should we improve the Delphi multi-agent process to maximize informational correctness — producing output that is more accurate and contains fewer hallucinations than asking the same question to a single model?
+/cc delphi --design --deep #WORKER_1 #WORKER_2 #WORKER_3 "How should we improve the Delphi multi-agent process to maximize informational correctness — producing output that is more accurate and contains fewer hallucinations than asking the same question to a single model?
 
 Background: The Delphi process runs multiple Claude Code bots (workers) who independently answer a question. A judge synthesizes and verifies their answers. Workers then critique the judge. The judge produces a final answer. There are 3 modes: 'code' (workers read source files, judge verifies claims against actual code), 'research' (workers enumerate options/tradeoffs, judge fills gaps), 'design' (workers propose solutions, judge evaluates feasibility). Implementation is at /Users/chris.shreve/claude-slack-bridge/src/temporal/ if useful.
 
