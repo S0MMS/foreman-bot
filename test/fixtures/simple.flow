@@ -1,0 +1,6 @@
+workflow "greet"
+  ask @writer "Write a one-paragraph greeting" -> greeting
+  if {greeting} means "too formal"
+    ask @writer "Make it more casual: {greeting}" -> greeting
+  otherwise
+    send #general "{greeting}"
