@@ -127,7 +127,7 @@ async function processChannelMessage(
   imagePaths: string[] = [],
   onRateLimit?: (retryInMs: number) => void,
   noSlackMcp?: boolean
-): Promise<void> {
+): Promise<{ result: string; sessionId: string; cost: number; turns: number }> {
   const state = getState(channel);
 
   // Inject context primer if set (from /cc model --with-context)
@@ -209,6 +209,7 @@ async function processChannelMessage(
     const elapsedStr = totalSec >= 60 ? `${Math.floor(totalSec / 60)}m ${totalSec % 60}s` : `${totalSec}s`;
     await app.client.chat.postMessage({ channel, text: `_Done in ${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedStr}_` });
   }
+  return { result: result.result || '', sessionId: result.sessionId || '', cost: result.cost || 0, turns: result.turns || 0 };
 }
 
 /**
@@ -1139,8 +1140,48 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           } catch (err) {
             await respond(`:x: Temporal error: ${err instanceof Error ? err.message : String(err)}\n\nIs the Temporal server running? Try: \`temporal server start-dev\``);
           }
+        } else if (subCommand === "flowspec-test") {
+          // /cc workflow flowspec-test #channel <prompt>
+          // Tests dispatchToBot: sends prompt to a bot channel, awaits response
+          const rawChannel = args[2];
+          let botChannelId: string | null = null;
+          const mentionMatch = rawChannel?.match(/^<#([A-Z0-9]+)/i);
+          if (mentionMatch) {
+            // <#C0AMHPXD141|channel-name> or <#C0AMHPXD141>
+            botChannelId = mentionMatch[1];
+          } else if (/^[A-Z][A-Z0-9]{6,}$/i.test(rawChannel ?? '')) {
+            // Raw channel ID like C0AMHPXD141
+            botChannelId = rawChannel;
+          } else if (rawChannel) {
+            // Plain name like #ios-dev4 or ios-dev4
+            const name = rawChannel.startsWith("#") ? rawChannel.slice(1) : rawChannel;
+            const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+            const found = (listRes.channels || []).find((c: any) => c.name === name);
+            botChannelId = found?.id ?? null;
+          }
+          if (!botChannelId) {
+            await respond(`:x: Usage: \`/cc workflow flowspec-test #bot-channel What is 2+2?\``);
+            break;
+          }
+          const prompt = args.slice(3).join(" ") || "Say hello and tell me your name.";
+          try {
+            const { getTemporalClient } = await import("./temporal/client.js");
+            const { flowspecTestWorkflow } = await import("./temporal/workflows.js");
+            const client = await getTemporalClient();
+            await respond(`:test_tube: FlowSpec test: dispatching to <#${botChannelId}>...`);
+            const handle = await client.workflow.start(flowspecTestWorkflow, {
+              args: [botChannelId, prompt],
+              taskQueue: "foreman",
+              workflowId: `flowspec-test-${Date.now()}`,
+            });
+            const result = await handle.result();
+            const truncated = result.length > 500 ? result.slice(0, 500) + "..." : result;
+            await respond(`:white_check_mark: *FlowSpec test complete!*\n\n*Response from bot:*\n${truncated}`);
+          } catch (err) {
+            await respond(`:x: FlowSpec test error: ${err instanceof Error ? err.message : String(err)}\n\nIs the Temporal server running?`);
+          }
         } else {
-          await respond(`:x: Unknown workflow subcommand. Try: \`/cc workflow hello <name>\``);
+          await respond(`:x: Unknown workflow subcommand. Try: \`/cc workflow hello <name>\` or \`/cc workflow flowspec-test #channel <prompt>\``);
         }
         break;
       }

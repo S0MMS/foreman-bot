@@ -53,6 +53,49 @@ export async function postCompletion(channelId: string, startEpochMs: number): P
   });
 }
 
+// ── FlowSpec ─────────────────────────────────────────────────────────────────
+
+/**
+ * FlowSpec core activity — dispatch a prompt to a bot channel, await the
+ * full Claude session response, and return the response text.
+ *
+ * This is the synchronous counterpart of runClaudeInChannel: instead of
+ * fire-and-forget + polling, it awaits processChannelMessage directly.
+ * Each workflow gets its own dedicated bot, so no mutex is needed.
+ */
+export async function dispatchToBot(
+  channelId: string,
+  prompt: string,
+): Promise<string> {
+  const app = getSlackApp();
+  const processChannelMessage = getProcessChannelMessage();
+
+  // Post prompt to channel for observability
+  await app.client.chat.postMessage({ channel: channelId, text: `📋 *FlowSpec dispatch:*\n${prompt}` });
+
+  // Heartbeat every 30s so Temporal doesn't time out long-running bot calls
+  const heartbeat = setInterval(() => {
+    Context.current().heartbeat({ channelId, status: 'waiting' });
+  }, 30_000);
+
+  try {
+    const result = await processChannelMessage(
+      app,
+      channelId,
+      prompt,
+      '',    // no requesterId — workflow-initiated
+      [],    // no images
+      (retryInMs: number) => {
+        Context.current().heartbeat({ channelId, status: 'rate-limited', retryInMs });
+      },
+      true,  // noSlackMcp — workflow bots don't need canvas tools
+    );
+    return result.result;
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 /**

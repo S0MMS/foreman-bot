@@ -115,11 +115,28 @@ function buildPhase3JudgePrompt(
   return `You previously verified worker answers to this question: "${p.question}"\n\nYour verified answer:\n\n${judgeSynthesis}\n\nWorkers have now reviewed your answer and raised these critiques:\n\n${critiqueSummary}\n\nFor each critique, use Read, Glob, Grep, and Bash to verify it against the actual source code. If the critique is correct, update your answer and explain what was wrong. If the critique is incorrect, state why — citing the code. Then write your final verified answer, grounded entirely in what the code actually shows.${think}`;
 }
 
+// FlowSpec activities: long-running (bot may take minutes to respond)
+const { dispatchToBot } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '15 minutes',
+  heartbeatTimeout: '60 seconds',
+});
+
 // ── Workflows ─────────────────────────────────────────────────────────────────
 
 /** Hello workflow — simplest possible example. */
 export async function helloWorkflow(name: string): Promise<string> {
   return await greet(name);
+}
+
+/**
+ * FlowSpec test workflow — proves dispatchToBot works end-to-end.
+ * Sends a simple prompt to a bot channel and returns the response.
+ */
+export async function flowspecTestWorkflow(
+  botChannelId: string,
+  prompt: string,
+): Promise<string> {
+  return await dispatchToBot(botChannelId, prompt);
 }
 
 /**

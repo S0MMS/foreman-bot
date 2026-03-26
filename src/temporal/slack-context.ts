@@ -7,6 +7,13 @@
 
 import type { App } from '@slack/bolt';
 
+export type ProcessChannelResult = {
+  result: string;
+  sessionId: string;
+  cost: number;
+  turns: number;
+};
+
 type ProcessChannelFn = (
   app: App,
   channel: string,
@@ -15,7 +22,7 @@ type ProcessChannelFn = (
   imagePaths?: string[],
   onRateLimit?: (retryInMs: number) => void,
   noSlackMcp?: boolean,
-) => Promise<void>;
+) => Promise<ProcessChannelResult>;
 
 let _app: App | null = null;
 let _processFn: ProcessChannelFn | null = null;
