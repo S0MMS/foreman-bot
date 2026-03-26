@@ -1187,30 +1187,63 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
       }
 
       case "run": {
-        // /cc run <file.flow> [workflow_name] — run a FlowSpec workflow via Temporal
+        // /cc run <file.flow|canvas> [workflow_name] — run a FlowSpec workflow via Temporal
         const flowFile = args[1];
         if (!flowFile) {
-          await respond(`:x: Usage: \`/cc run <file.flow> [workflow_name]\`\nExample: \`/cc run workflows/review.flow\``);
+          await respond(`:x: Usage: \`/cc run <file.flow> [workflow_name]\`\nor: \`/cc run canvas [workflow_name]\` (reads FlowSpec from channel canvas)`);
           break;
         }
         try {
-          const { resolve, isAbsolute } = await import("path");
-          const { readFileSync, existsSync } = await import("fs");
           const { parseFlowSpec } = await import("./flowspec/parser.js");
           const { loadBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");
           const { getTemporalClient } = await import("./temporal/client.js");
           const { flowspecWorkflow } = await import("./temporal/workflows.js");
 
-          // Resolve file path relative to channel cwd
-          const session = getState(channel);
-          const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, flowFile);
-          if (!existsSync(filePath)) {
-            await respond(`:x: File not found: \`${filePath}\``);
-            break;
+          let source: string;
+          let sourceLabel: string;
+
+          if (flowFile === "canvas") {
+            // Read FlowSpec from the channel's Slack canvas
+            const { fetchChannelCanvas } = await import("./canvas.js");
+            const canvasResult = await fetchChannelCanvas(app, channel);
+            if (!canvasResult) {
+              await respond(`:x: No canvas found in this channel. Create a canvas and write your FlowSpec workflow in it.`);
+              break;
+            }
+            const canvasContent = canvasResult.content;
+            // Extract FlowSpec from code blocks (HTML <pre> tags or markdown fences)
+            const preBlockMatch = canvasContent.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+            const codeBlockMatch = canvasContent.match(/```(?:flowspec)?\n([\s\S]*?)```/);
+            if (preBlockMatch) {
+              // Canvas returns HTML: convert <br> to newlines, decode entities, strip tags
+              source = preBlockMatch[1]
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/&gt;/g, ">")
+                .replace(/&lt;/g, "<")
+                .replace(/&amp;/g, "&")
+                .replace(/<[^>]+>/g, "")
+                .trim();
+            } else if (codeBlockMatch) {
+              source = codeBlockMatch[1];
+            } else {
+              source = canvasContent;
+            }
+            sourceLabel = "canvas";
+          } else {
+            // Read from file
+            const { resolve, isAbsolute } = await import("path");
+            const { readFileSync, existsSync } = await import("fs");
+            const session = getState(channel);
+            const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, flowFile);
+            if (!existsSync(filePath)) {
+              await respond(`:x: File not found: \`${filePath}\``);
+              break;
+            }
+            source = readFileSync(filePath, "utf-8");
+            sourceLabel = flowFile;
           }
 
-          // Parse the .flow file
-          const source = readFileSync(filePath, "utf-8");
+          // Parse the FlowSpec source
           const workflows = parseFlowSpec(source);
           const workflowName = args[2] || workflows[0].name;
           const workflow = workflows.find((w: any) => w.name === workflowName);
@@ -1247,8 +1280,11 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             break;
           }
 
-          // Collect inputs from remaining args (key=value pairs)
+          // Apply declared input defaults, then override with user-provided args
           const inputs: Record<string, string> = {};
+          for (const inp of workflow.inputs || []) {
+            if (inp.defaultValue !== undefined) inputs[inp.name] = inp.defaultValue;
+          }
           for (const arg of args.slice(3)) {
             const eq = arg.indexOf("=");
             if (eq > 0) {
@@ -1265,7 +1301,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             workflowId,
           });
 
-          await respond(`:rocket: *FlowSpec started!*\n*Workflow:* ${workflowName}\n*ID:* \`${workflowId}\`\n*Bots:* ${Object.keys(botRegistry).filter(b => !missingBots.includes(b)).join(", ")}\n\nUse \`/cc check ${workflowId}\` to check status.`);
+          await respond(`:rocket: *FlowSpec started!*\n*Source:* ${sourceLabel}\n*Workflow:* ${workflowName}\n*ID:* \`${workflowId}\`\n*Bots:* ${Object.keys(botRegistry).filter(b => !missingBots.includes(b)).join(", ")}\n\nUse \`/cc check ${workflowId}\` to check status.`);
         } catch (err) {
           await respond(`:x: FlowSpec error: ${err instanceof Error ? err.message : String(err)}`);
         }

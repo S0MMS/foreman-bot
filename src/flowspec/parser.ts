@@ -221,7 +221,7 @@ class Parser {
     let text = line.text;
 
     // ask @bot "prompt" [modifiers] -> capture
-    const botMatch = text.match(/^ask\s+@(\w+)\s+/);
+    const botMatch = text.match(/^ask\s+@([\w-]+)\s+/);
     if (!botMatch) throw new ParseError(line.num, `Expected: ask @bot "prompt", got: ${text}`);
     const bot = botMatch[1];
     text = text.slice(botMatch[0].length);
@@ -322,7 +322,7 @@ class Parser {
     const text = line.text;
 
     // send @target "message" or send #channel "message"
-    const targetMatch = text.match(/^send\s+([#@]\w+)\s+/);
+    const targetMatch = text.match(/^send\s+([#@][\w-]+)\s+/);
     if (!targetMatch) throw new ParseError(line.num, `Expected: send @target "message" or send #channel "message"`);
 
     const rawTarget = targetMatch[1];

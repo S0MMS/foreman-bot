@@ -1,0 +1,4 @@
+workflow "Hello World"
+  inputs: topic (default "the weather")
+  ask @flowbot-01 "Write a haiku about {topic}" -> haiku
+  send @flowbot-02 "{haiku}"
