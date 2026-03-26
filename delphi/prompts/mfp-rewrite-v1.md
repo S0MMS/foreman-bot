@@ -14,9 +14,10 @@ I am not asking you to solve this problem. I am asking you to identify the RIGHT
 
 Background:
 - MFP is a large, mature fitness and nutrition tracking app with millions of users
-- The current codebase is complex, legacy, and difficult for AI to work with
-- The goal is a clean-sheet rewrite where AI bots are the primary developers going forward
-- 'Simplicity' means: predictable patterns, clear module boundaries, minimal magic, easy for an AI to read and confidently modify any part of the codebase
+- This is a 100% greenfield app. There is zero existing code. Not a single line will be carried over.
+- Every line of code will be written by an AI bot. Human developers play an optional guidance and review role only — they do not write code.
+- The goal is an architecture and codebase that AI can develop features in efficiently, correctly, and in parallel
+- 'Simplicity' means: predictable patterns, clear module boundaries, minimal magic, easy for an AI to read and confidently modify any part of the codebase without breaking something elsewhere
 - The backend is staying — this is a client rewrite only
 - A sync replacement is already in progress (PowerSync + Apollo Client on iOS)
 
