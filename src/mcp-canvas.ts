@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { homedir } from "os";
 import type { App } from "@slack/bolt";
-import { fetchChannelCanvas, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
+import { fetchChannelCanvas, fetchCanvasByFileId, listChannelCanvases, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
 import { getState, setCanvasFileId } from "./session.js";
 import { createJiraIssue, readJiraIssue, updateJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, getJiraProjectKey, getJiraHost } from "./jira.js";
 import { readConfluencePage, searchConfluencePages, createConfluencePage, updateConfluencePage } from "./confluence.js";
@@ -23,22 +23,48 @@ export function createCanvasMcpServer(channelId: string, app: App) {
     name: "foreman-toolbelt",
     tools: [
       tool(
-        "CanvasRead",
-        "Read the full content of a Slack channel's canvas. Returns the canvas content as markdown text. " +
-        "Sections created by bots are tagged with *[bot-name] Heading* format. " +
-        "Sections without a tag were created by humans. Use this to understand the canvas before making changes. " +
-        "To read another channel's canvas, pass its channel_id (e.g. 'C0ABC123'). Omit to read the current channel's canvas.",
+        "CanvasList",
+        "List all canvases in a Slack channel. Returns canvas titles and IDs. " +
+        "Use a canvas_id from this list with CanvasRead, CanvasCreate, CanvasUpdate, or CanvasDelete to target a specific canvas. " +
+        "Omit channel_id to list canvases in the current channel.",
         {
-          channel_id: z.string().optional().describe("Optional channel ID to read from a different channel (e.g. 'C0ABC123'). Omit to read the current channel."),
+          channel_id: z.string().optional().describe("Optional channel ID. Omit to list canvases in the current channel."),
         },
         async ({ channel_id }) => {
           const targetChannel = channel_id || channelId;
           try {
-            const canvas = await fetchChannelCanvas(app, targetChannel);
-            if (!canvas) {
-              return { content: [{ type: "text" as const, text: `No canvas found for channel ${targetChannel}.` }] };
+            const canvases = await listChannelCanvases(app, targetChannel);
+            if (canvases.length === 0) {
+              return { content: [{ type: "text" as const, text: "No canvases found in this channel." }] };
             }
-            if (!channel_id) setCanvasFileId(channelId, canvas.fileId); // only cache for current channel
+            const list = canvases.map((c, i) => `${i + 1}. **${c.title}** — \`${c.fileId}\``).join("\n");
+            return { content: [{ type: "text" as const, text: `Found ${canvases.length} canvas(es):\n\n${list}` }] };
+          } catch (err) {
+            return { content: [{ type: "text" as const, text: `Error listing canvases: ${err instanceof Error ? err.message : String(err)}` }] };
+          }
+        }
+      ),
+      tool(
+        "CanvasRead",
+        "Read the full content of a Slack channel's canvas. Returns the canvas content as markdown text. " +
+        "Sections created by bots are tagged with *[bot-name] Heading* format. " +
+        "Sections without a tag were created by humans. Use this to understand the canvas before making changes. " +
+        "To read a specific canvas, pass its canvas_id (from CanvasList). " +
+        "To read another channel's canvas, pass its channel_id (e.g. 'C0ABC123'). Omit both to read the current channel's default canvas.",
+        {
+          channel_id: z.string().optional().describe("Optional channel ID to read from a different channel (e.g. 'C0ABC123'). Omit to read the current channel."),
+          canvas_id: z.string().optional().describe("Optional canvas file ID (from CanvasList) to read a specific canvas. If omitted, reads the default canvas."),
+        },
+        async ({ channel_id, canvas_id }) => {
+          const targetChannel = channel_id || channelId;
+          try {
+            const canvas = canvas_id
+              ? await fetchCanvasByFileId(app, canvas_id)
+              : await fetchChannelCanvas(app, targetChannel);
+            if (!canvas) {
+              return { content: [{ type: "text" as const, text: `No canvas found.` }] };
+            }
+            if (!channel_id && !canvas_id) setCanvasFileId(channelId, canvas.fileId); // only cache for current channel default
 
             // Annotate the content with ownership info
             const botName = getBotName();
@@ -72,15 +98,19 @@ export function createCanvasMcpServer(channelId: string, app: App) {
         "CanvasCreate",
         "Append new content to the end of this Slack channel's canvas. Use this when the user asks you to add or create new content. " +
         "Your headings will be automatically tagged with your bot name so they can be identified later. " +
-        "Always start new sections with a heading (## Heading) so they can be updated or deleted later.",
-        { markdown: z.string().describe("The markdown content to append. Should start with a heading (e.g. ## Section Title).") },
-        async ({ markdown }) => {
+        "Always start new sections with a heading (## Heading) so they can be updated or deleted later. " +
+        "Pass canvas_id (from CanvasList) to append to a specific canvas instead of the default one.",
+        {
+          markdown: z.string().describe("The markdown content to append. Should start with a heading (e.g. ## Section Title)."),
+          canvas_id: z.string().optional().describe("Optional canvas file ID (from CanvasList) to target a specific canvas. Omit to use the default canvas."),
+        },
+        async ({ markdown, canvas_id }) => {
           try {
-            const state = getState(channelId);
-            if (!state.canvasFileId) {
-              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            const fileId = canvas_id || getState(channelId).canvasFileId;
+            if (!fileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasList or CanvasRead first." }] };
             }
-            await appendCanvasContent(app, state.canvasFileId, markdown, getBotName());
+            await appendCanvasContent(app, fileId, markdown, getBotName());
             return { content: [{ type: "text" as const, text: "Content appended to canvas successfully." }] };
           } catch (err) {
             return {
@@ -94,18 +124,20 @@ export function createCanvasMcpServer(channelId: string, app: App) {
         "Update a specific section of this Slack channel's canvas. Finds the section by its heading text and replaces it. " +
         "Call CanvasRead first to see the current sections and their ownership. " +
         "If multiple sections match, the first is replaced and duplicates are deleted. " +
-        "The updated section will be tagged with your bot name.",
+        "The updated section will be tagged with your bot name. " +
+        "Pass canvas_id (from CanvasList) to target a specific canvas.",
         {
           sectionHeading: z.string().describe("The heading text of the section to update (e.g. 'Acceptance Criteria'). Must match an existing heading."),
           markdown: z.string().describe("The complete new markdown content for this section, including the heading (e.g. '## Acceptance Criteria\\n- criterion 1')."),
+          canvas_id: z.string().optional().describe("Optional canvas file ID (from CanvasList) to target a specific canvas. Omit to use the default canvas."),
         },
-        async ({ sectionHeading, markdown }) => {
+        async ({ sectionHeading, markdown, canvas_id }) => {
           try {
-            const state = getState(channelId);
-            if (!state.canvasFileId) {
-              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            const fileId = canvas_id || getState(channelId).canvasFileId;
+            if (!fileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasList or CanvasRead first." }] };
             }
-            const result = await updateCanvasSection(app, state.canvasFileId, sectionHeading, markdown, getBotName());
+            const result = await updateCanvasSection(app, fileId, sectionHeading, markdown, getBotName());
             if (!result.found) {
               return { content: [{ type: "text" as const, text: result.reason || `No section found matching "${sectionHeading}". Call CanvasRead to see the current canvas sections.` }] };
             }
@@ -121,17 +153,19 @@ export function createCanvasMcpServer(channelId: string, app: App) {
         "CanvasDelete",
         "Delete a specific section from this Slack channel's canvas. Finds the section by its heading text and removes it. " +
         "Call CanvasRead first to see what sections exist. " +
-        "If multiple sections match the heading text, all matching sections are deleted.",
+        "If multiple sections match the heading text, all matching sections are deleted. " +
+        "Pass canvas_id (from CanvasList) to target a specific canvas.",
         {
           sectionHeading: z.string().describe("The heading text of the section to delete (e.g. 'Acceptance Criteria'). All matching sections will be deleted."),
+          canvas_id: z.string().optional().describe("Optional canvas file ID (from CanvasList) to target a specific canvas. Omit to use the default canvas."),
         },
-        async ({ sectionHeading }) => {
+        async ({ sectionHeading, canvas_id }) => {
           try {
-            const state = getState(channelId);
-            if (!state.canvasFileId) {
-              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasRead first to load the canvas." }] };
+            const fileId = canvas_id || getState(channelId).canvasFileId;
+            if (!fileId) {
+              return { content: [{ type: "text" as const, text: "No canvas loaded yet. Call CanvasList or CanvasRead first." }] };
             }
-            const count = await deleteCanvasSection(app, state.canvasFileId, sectionHeading, getBotName());
+            const count = await deleteCanvasSection(app, fileId, sectionHeading, getBotName());
             if (count === 0) {
               return { content: [{ type: "text" as const, text: `No section found matching "${sectionHeading}". Call CanvasRead to see the current canvas sections.` }] };
             }

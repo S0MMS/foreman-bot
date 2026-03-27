@@ -73,6 +73,62 @@ async function downloadCanvasImages(markdown: string, token: string, app: App): 
 }
 
 /**
+ * List all canvases in a channel. Returns IDs and titles.
+ */
+export async function listChannelCanvases(
+  app: App,
+  channel: string
+): Promise<Array<{ fileId: string; title: string }>> {
+  const results: Array<{ fileId: string; title: string }> = [];
+
+  // Check channel tabs for the default canvas
+  try {
+    const infoRes = await app.client.conversations.info({ channel });
+    const channelData = infoRes.channel as any;
+    const tabs: any[] = channelData?.properties?.tabs || [];
+    const canvasTab = tabs.find((t: any) => t.type === "canvas");
+    const defaultFileId = canvasTab?.data?.file_id || channelData?.properties?.meeting_notes?.file_id;
+    if (defaultFileId) {
+      results.push({ fileId: defaultFileId, title: canvasTab?.label || "Channel Canvas" });
+    }
+  } catch { /* ignore */ }
+
+  // List all canvas files in the channel
+  try {
+    const listRes = await (app.client.files as any).list({ channel, types: "spaces" });
+    for (const file of listRes?.files || []) {
+      if (!results.find(r => r.fileId === file.id)) {
+        results.push({ fileId: file.id, title: file.title || file.name || "Untitled Canvas" });
+      }
+    }
+  } catch { /* ignore */ }
+
+  return results;
+}
+
+/**
+ * Fetch a specific canvas by its file ID.
+ */
+export async function fetchCanvasByFileId(
+  app: App,
+  fileId: string
+): Promise<{ fileId: string; content: string; images: CanvasImage[] } | null> {
+  const fileRes = await app.client.files.info({ file: fileId });
+  const downloadUrl: string | undefined =
+    (fileRes as any).file?.url_private_download ||
+    (fileRes as any).file?.url_private;
+  if (!downloadUrl) return null;
+
+  const dlRes = await fetch(downloadUrl, {
+    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN || ""}` },
+  });
+  if (!dlRes.ok) throw new Error(`Canvas download failed: HTTP ${dlRes.status}`);
+  const content = await dlRes.text();
+  const images = await downloadCanvasImages(content, process.env.SLACK_BOT_TOKEN || "", app);
+  return { fileId, content, images };
+}
+
+/**
  * Fetch the canvas file ID and raw markdown content for a channel.
  */
 export async function fetchChannelCanvas(

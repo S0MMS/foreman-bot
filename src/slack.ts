@@ -58,7 +58,7 @@ import { MODEL_ALIASES, generateCuteName, SUPPORTED_IMAGE_TYPES } from "./types.
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { markdownToSlack, chunkMessage, formatToolRequest } from "./format.js";
 import { readConfig } from "./config.js";
-import { fetchChannelCanvas, appendCanvasContent } from "./canvas.js";
+import { fetchChannelCanvas, appendCanvasContent, listChannelCanvases } from "./canvas.js";
 import { createCanvasMcpServer } from "./mcp-canvas.js";
 
 
@@ -606,9 +606,24 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             await app.client.chat.postMessage({ channel, text: `:x: Canvas write error: ${err instanceof Error ? err.message : String(err)}` });
           }
 
+        } else if (canvasSubcommand === "list") {
+          try {
+            const targetChannel = args[2] || channel;
+            const canvases = await listChannelCanvases(app, targetChannel);
+            if (canvases.length === 0) {
+              await respond(":x: No canvases found in this channel.");
+            } else {
+              const list = canvases.map((c, i) => `${i + 1}. *${c.title}* — \`${c.fileId}\``).join("\n");
+              await respond(`:spiral_note_pad: *${canvases.length} canvas(es) in this channel:*\n${list}`);
+            }
+          } catch (err) {
+            await respond(`:x: Canvas list error: ${err instanceof Error ? err.message : String(err)}`);
+          }
+
         } else {
           await respond(
             "*Canvas commands:*\n" +
+            "• `/cc canvas list` — list all canvases in this channel\n" +
             "• `/cc canvas read` — load canvas, summarize it, and start clarifying Q&A\n" +
             "• `/cc canvas write` — generate and save acceptance criteria to the canvas"
           );
