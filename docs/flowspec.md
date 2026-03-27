@@ -10,9 +10,9 @@
 
 Flowspec is a minimal workflow description language for orchestrating AI bots. It is:
 
+- **Turing complete** — self-referential `call` + conditionals enable unbounded recursion. This is the first and primary design principle.
 - **Simple enough** for a non-engineer (e.g. a product manager) to write
 - **Expressive enough** to cover ~80% of common multi-agent workflow patterns
-- **Turing complete** — self-referential `call` + conditionals enable unbounded recursion; compiled/transformed into a Temporal workflow (TypeScript) at runtime
 
 The agents in this system are Slack-based Claude Code bots. Each bot lives in its own Slack channel, has its own working directory and filesystem access, and runs a full Claude Code session. Dispatching work to a bot means posting a message to its Slack channel and triggering its Claude session.
 
@@ -647,8 +647,8 @@ The runtime automatically:
 
 ## Design Philosophy
 
-FlowSpec is intentionally Turing complete. Self-referential `call "Workflow"` combined with `if/otherwise` conditional branching gives the language unbounded recursion with conditional base cases — sufficient for Turing completeness. This is a core design principle, not an accident.
+FlowSpec's **first and primary design principle** is Turing completeness. Self-referential `call "Workflow"` combined with `if/otherwise` conditional branching gives the language unbounded recursion with conditional base cases. Everything else — simplicity, PM-readability, efficient AI-to-human communication — is secondary to this.
 
-At the same time, FlowSpec keeps its primitive count minimal. The complexity lives in the bots and the runtime — not in the language itself. The language handles common patterns simply; the escape hatch for edge cases is writing a Temporal workflow in TypeScript directly.
+FlowSpec keeps its primitive count minimal. The complexity lives in the bots and the runtime — not in the language itself. The language handles common patterns simply; the escape hatch for edge cases is writing a Temporal workflow in TypeScript directly.
 
-> One verb. Named outputs. 1:1 Temporal mapping. Turing complete via recursion. TypeScript escape hatch. Don't try to make the DSL grow to cover everything — that's how simple languages die.
+> Turing complete first. One verb. Named outputs. 1:1 Temporal mapping. TypeScript escape hatch. Don't try to make the DSL grow to cover everything — that's how simple languages die.
