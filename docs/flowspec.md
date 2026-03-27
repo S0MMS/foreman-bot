@@ -636,8 +636,12 @@ The runtime automatically:
 ### File Convention
 
 - **Extension:** `.flow`
-- **Location:** `~/.foreman/workflows/`
-- **Invocation:** `/cc run "Fix All Crash Bugs" with ticket_id = BUG-1234`
+- **Location:** `~/.foreman/workflows/` (or any path, or a Slack canvas)
+- **Invocation:**
+  - From file: `/cc run fix-all-bugs.flow "Fix All Crash Bugs" ticket_id=BUG-1234`
+  - From default canvas: `/cc run canvas "Fix All Crash Bugs"`
+  - From named canvas: `/cc run "My Workflows" "Fix All Crash Bugs"`
+  - List available canvases: `/cc canvas list`
 
 ---
 

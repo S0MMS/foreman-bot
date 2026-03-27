@@ -161,7 +161,8 @@ Foreman runs an **in-process MCP server** (`mcp-canvas.ts`) that exposes its own
 
 | Tool | Description |
 |---|---|
-| `CanvasRead` | Read the current channel's Slack canvas as markdown |
+| `CanvasList` | List all canvases in this channel (returns title + file ID for each) |
+| `CanvasRead` | Read the current channel's default canvas as markdown |
 | `CanvasCreate` | Create a new canvas in this channel |
 | `CanvasUpdate` | Append or update a section in the canvas (bot-tagged headings) |
 | `CanvasDelete` | Delete a bot-tagged section from the canvas |
@@ -169,6 +170,8 @@ Foreman runs an **in-process MCP server** (`mcp-canvas.ts`) that exposes its own
 | `CanvasUpdateById` | Update any canvas by file ID |
 | `CanvasDeleteById` | Delete any canvas by file ID |
 | `DiagramCreate` | Create a Mermaid diagram and render it to the canvas |
+
+`CanvasRead`, `CanvasCreate`, `CanvasUpdate`, and `CanvasDelete` all accept an optional `canvas_id` parameter. When provided, they target that specific canvas instead of the channel default.
 
 Bot sections are tagged with `*[bot-name] Heading*` so multiple bots can coexist on the same canvas without overwriting each other.
 
@@ -235,10 +238,9 @@ The Temporal worker starts automatically when Foreman boots (`index.ts`). If the
 | Workflow | Command | Description |
 |---|---|---|
 | `helloWorkflow` | `/cc workflow hello <name>` | Hello world — proves the integration works |
-
-### Planned workflows
-
-- `delphiWorkflow` — replace the current polling-based Delphi implementation with a durable Temporal workflow
+| `delphiWorkflow` | `/cc delphi [--design\|--research\|--code] [--deep] #w1 #w2 #w3 "question"` | 3-phase Delphi: workers → judge → workers critique → judge final answer |
+| `flowspecWorkflow` | `/cc run <source> [workflow_name]` | Interprets a FlowSpec DSL workflow — the universal FlowSpec execution engine |
+| `flowspecTestWorkflow` | `/cc workflow flowspec-test <channelId> <prompt>` | End-to-end test: dispatches a single prompt to a bot and returns the response |
 
 ---
 
@@ -309,6 +311,11 @@ Run `foreman init` for the interactive setup wizard.
 | `/cc build [scheme]` | xcodebuild + install on booted simulator |
 | `/cc bitrise <workflow>` | Trigger Bitrise CI workflow |
 | `/cc workflow hello <name>` | Run the hello Temporal workflow — proves Temporal integration is working |
+| `/cc delphi [--design\|--research\|--code] [--deep] #w1 #w2 #w3 "question"` | Run a 3-phase Delphi multi-bot verification workflow via Temporal |
+| `/cc run <file.flow> [workflow_name]` | Run a FlowSpec workflow from a `.flow` file |
+| `/cc run canvas [workflow_name]` | Run a FlowSpec workflow from the channel's default canvas |
+| `/cc run "Canvas Title" [workflow_name]` | Run a FlowSpec workflow from a named canvas |
+| `/cc canvas list [channel]` | List all canvases in the current (or specified) channel |
 | `/cc reboot` | Restart Foreman process |
 
 Messages starting with `!` bypass Slack's slash command interception: `!freud:pull main` → `/freud:pull main`.

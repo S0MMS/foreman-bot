@@ -64,12 +64,16 @@ When Claude wants to edit a file or run a shell command, Foreman posts an **Appr
 | Command | Description |
 |---|---|
 | `/cc cwd <path>` | Set working directory for this channel (`~/` paths supported) |
-| `/cc model <name>` | Set model (`opus`, `sonnet`, `haiku`, or full model ID) |
+| `/cc model <name>` | Set model (`opus`, `sonnet`, `haiku`, vendor:model, or full model ID) |
 | `/cc name <name>` | Override the bot's persona name for this channel |
 | `/cc plugin <path>` | Load a Claude Code plugin |
 | `/cc stop` | Cancel the running query |
 | `/cc session` | Show current session info |
 | `/cc new` | Clear session and start fresh |
+| `/cc canvas list` | List all canvases in this channel |
+| `/cc run <file.flow> [workflow]` | Run a FlowSpec workflow from a file |
+| `/cc run "Canvas Title" [workflow]` | Run a FlowSpec workflow from a named canvas |
+| `/cc delphi #w1 #w2 #w3 "question"` | Run a 3-phase Delphi multi-bot verification workflow |
 | `/cc reboot` | Restart the Foreman process |
 
 ## Running as a service

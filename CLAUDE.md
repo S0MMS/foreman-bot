@@ -123,6 +123,11 @@ All control commands use the Slack slash command `/cc`. Parsed in `slack.ts`.
 | `/cc bitrise <workflow>` | Trigger a Bitrise CI workflow on the current git branch. |
 | `/cc cleanup` | Remove stale channel sessions from disk. |
 | `/cc workflow hello <name>` | Run the hello Temporal workflow — proves Temporal integration is working. |
+| `/cc delphi [--design\|--research\|--code] [--deep] #w1 #w2 #w3 "question"` | Run a 3-phase Delphi multi-bot verification workflow via Temporal. Workers answer → judge synthesizes → workers critique → judge gives final answer. |
+| `/cc run <file.flow> [workflow_name]` | Run a FlowSpec workflow from a `.flow` file. |
+| `/cc run canvas [workflow_name]` | Run a FlowSpec workflow from the channel's default canvas. |
+| `/cc run "Canvas Title" [workflow_name]` | Run a FlowSpec workflow from a named canvas (case-insensitive title match). |
+| `/cc canvas list [channel]` | List all canvases in the current (or specified) channel with their IDs. |
 | `/cc reboot` | Exit process (launchd restarts Foreman). |
 
 ### Escape hatch for Claude slash commands
@@ -148,9 +153,15 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 
 | Tool | Description |
 |------|-------------|
-| `CanvasRead` | Read the current channel's canvas content |
-| `CanvasCreate` | Write/replace the current channel's canvas content |
-| `CanvasUpdate` | Append content to the current channel's canvas |
+| `CanvasList` | List all canvases in this channel (returns title + file ID for each) |
+| `CanvasRead` | Read the current channel's default canvas (optional `canvas_id` to target a specific one) |
+| `CanvasCreate` | Write/replace a canvas (optional `canvas_id` to target a specific one) |
+| `CanvasUpdate` | Append content to a canvas (optional `canvas_id` to target a specific one) |
+| `CanvasDelete` | Delete a bot-tagged section from a canvas (optional `canvas_id`) |
+| `CanvasReadById` | Read any canvas by file ID |
+| `CanvasUpdateById` | Update any canvas by file ID |
+| `CanvasDeleteById` | Delete a section from any canvas by file ID |
+| `DiagramCreate` | Create a Mermaid diagram and render it to the canvas |
 | `PostMessage` | Post a message to any Slack channel (auto-appends `— BotName (model)` signature) |
 | `ReadChannel` | Read recent message history from any Slack channel |
 

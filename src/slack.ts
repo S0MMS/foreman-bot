@@ -1228,7 +1228,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         // runArgs[0] = "run", runArgs[1] = file, runArgs[2] = workflow name, runArgs[3..] = key=value
         const flowFile = runArgs[1];
         if (!flowFile) {
-          await respond(`:x: Usage: \`/cc run <file.flow> [workflow_name]\`\nor: \`/cc run canvas [workflow_name]\` (reads FlowSpec from channel canvas)`);
+          await respond(`:x: Usage:\n• \`/cc run <file.flow> [workflow_name]\` — run from file\n• \`/cc run canvas [workflow_name]\` — run from default channel canvas\n• \`/cc run "Canvas Title" [workflow_name]\` — run from named canvas`);
           break;
         }
         try {
@@ -1267,7 +1267,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
               source = canvasContent;
             }
             sourceLabel = "canvas";
-          } else {
+          } else if (flowFile.endsWith(".flow")) {
             // Read from file
             const { resolve, isAbsolute } = await import("path");
             const { readFileSync, existsSync } = await import("fs");
@@ -1279,6 +1279,40 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             }
             source = readFileSync(filePath, "utf-8");
             sourceLabel = flowFile;
+          } else {
+            // Treat as canvas title — find by name in this channel
+            const { listChannelCanvases, fetchCanvasByFileId } = await import("./canvas.js");
+            const canvases = await listChannelCanvases(app, channel);
+            const match = canvases.find((c) => c.title.toLowerCase() === flowFile.toLowerCase());
+            if (!match) {
+              const available = canvases.length
+                ? canvases.map((c) => `"${c.title}"`).join(", ")
+                : "none found";
+              await respond(`:x: No canvas titled "${flowFile}" in this channel.\nAvailable: ${available}\nOr use \`/cc run <file.flow>\` to run from a file.`);
+              break;
+            }
+            const canvasResult = await fetchCanvasByFileId(app, match.fileId);
+            if (!canvasResult) {
+              await respond(`:x: Could not read canvas "${flowFile}".`);
+              break;
+            }
+            const canvasContent = canvasResult.content;
+            const preBlockMatch = canvasContent.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+            const codeBlockMatch = canvasContent.match(/```(?:flowspec)?\n([\s\S]*?)```/);
+            if (preBlockMatch) {
+              source = preBlockMatch[1]
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/&gt;/g, ">")
+                .replace(/&lt;/g, "<")
+                .replace(/&amp;/g, "&")
+                .replace(/<[^>]+>/g, "")
+                .trim();
+            } else if (codeBlockMatch) {
+              source = codeBlockMatch[1];
+            } else {
+              source = canvasContent;
+            }
+            sourceLabel = `canvas:"${match.title}"`;
           }
 
           // Parse the FlowSpec source
