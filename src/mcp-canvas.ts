@@ -7,7 +7,7 @@ import { homedir } from "os";
 import type { App } from "@slack/bolt";
 import { fetchChannelCanvas, fetchCanvasByFileId, listChannelCanvases, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
 import { getState, setCanvasFileId } from "./session.js";
-import { createJiraIssue, readJiraIssue, updateJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, getJiraProjectKey, getJiraHost } from "./jira.js";
+import { createJiraIssue, readJiraIssue, updateJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, transitionJiraIssue, assignJiraIssue, getJiraTransitions, getJiraIssueEditMeta, setJiraField, getJiraProjectKey, getJiraHost } from "./jira.js";
 import { readConfluencePage, searchConfluencePages, createConfluencePage, updateConfluencePage } from "./confluence.js";
 import { createPR, readPR, readPRComments, readIssue, searchGitHub, listPRs } from "./github.js";
 import { readConfig } from "./config.js";
@@ -473,6 +473,116 @@ export function createCanvasMcpServer(channelId: string, app: App) {
           } catch (err) {
             return {
               content: [{ type: "text" as const, text: `Error deleting comment: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraTransitionTicket",
+        "Move a Jira ticket to a new status (e.g. 'In Progress', 'Done', 'Backlog'). " +
+        "If the exact status name is unknown, it will list available transitions.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. TECHOPS-123)"),
+          status: z.string().describe("Target status name (e.g. 'In Progress', 'Done', 'In Review')"),
+        },
+        async ({ issueKey, status }) => {
+          try {
+            await transitionJiraIssue(issueKey, status);
+            return { content: [{ type: "text" as const, text: `${issueKey} moved to "${status}"` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error transitioning ticket: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraAssignTicket",
+        "Assign a Jira ticket to the current user (default) or a specific account ID.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. TECHOPS-123)"),
+          accountId: z.string().optional().describe("Jira account ID to assign to. Omit to assign to yourself."),
+        },
+        async ({ issueKey, accountId }) => {
+          try {
+            await assignJiraIssue(issueKey, accountId);
+            return { content: [{ type: "text" as const, text: `${issueKey} assigned${accountId ? ` to ${accountId}` : " to you"}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error assigning ticket: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraGetTransitions",
+        "Get available status transitions for a Jira ticket, including required fields and their allowed values. " +
+        "Use this before calling JiraTransitionTicket when you need to know valid status names or required fields.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. TECHOPS-123)"),
+        },
+        async ({ issueKey }) => {
+          try {
+            const transitions = await getJiraTransitions(issueKey);
+            const lines = transitions.map(t => {
+              const fieldLines = Object.entries(t.fields).map(([name, meta]) => {
+                const req = meta.required ? " (required)" : " (optional)";
+                const vals = meta.allowedValues.length > 0 ? `: ${meta.allowedValues.join(", ")}` : "";
+                return `    - ${name}${req}${vals}`;
+              });
+              return [`**${t.name}**`, ...fieldLines].join("\n");
+            });
+            return { content: [{ type: "text" as const, text: lines.join("\n\n") }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error getting transitions: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraGetFieldOptions",
+        "Get all editable fields for a Jira ticket with their allowed values. " +
+        "Use this to find valid options for custom fields like Work Allocation, Work Type, or Story Points before setting them.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. TECHOPS-123)"),
+        },
+        async ({ issueKey }) => {
+          try {
+            const fields = await getJiraIssueEditMeta(issueKey);
+            const lines = Object.entries(fields)
+              .filter(([, meta]) => meta.allowedValues.length > 0 || meta.required)
+              .map(([name, meta]) => {
+                const req = meta.required ? " *(required)*" : "";
+                const vals = meta.allowedValues.length > 0 ? `\n  Options: ${meta.allowedValues.map(v => v.name).join(", ")}` : "";
+                return `**${name}**${req} \`${meta.fieldId}\`${vals}`;
+              });
+            return { content: [{ type: "text" as const, text: lines.join("\n\n") || "No constrained fields found." }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error getting field options: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraSetField",
+        "Set a field on a Jira ticket by field name. Use JiraGetFieldOptions first to see valid field names and allowed values. " +
+        "For Story Points pass a number as a string. For select fields (Work Allocation, Work Type) pass the option name exactly.",
+        {
+          issueKey: z.string().describe("The Jira issue key (e.g. TECHOPS-123)"),
+          fieldName: z.string().describe("Field name exactly as returned by JiraGetFieldOptions (e.g. 'Story Points', 'Work Type')"),
+          value: z.string().describe("Value to set. For select fields use the option name; for number fields use the number as a string."),
+        },
+        async ({ issueKey, fieldName, value }) => {
+          try {
+            // Story Points is a number field
+            const numVal = Number(value);
+            await setJiraField(issueKey, fieldName, isNaN(numVal) ? value : numVal);
+            return { content: [{ type: "text" as const, text: `Set "${fieldName}" to "${value}" on ${issueKey}` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error setting field: ${err instanceof Error ? err.message : String(err)}` }],
             };
           }
         }

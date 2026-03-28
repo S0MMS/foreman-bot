@@ -325,6 +325,88 @@ export function getJiraHost(): string {
   return getJiraConfig().host;
 }
 
+/** Get editable fields for a Jira issue with their allowed values */
+export async function getJiraIssueEditMeta(issueKey: string): Promise<Record<string, { fieldId: string; required: boolean; allowedValues: Array<{ id?: string; name: string }> }>> {
+  const result = await jiraFetch(`/rest/api/3/issue/${issueKey}/editmeta`);
+  const out: Record<string, { fieldId: string; required: boolean; allowedValues: Array<{ id?: string; name: string }> }> = {};
+  for (const [fieldId, meta] of Object.entries<any>(result.fields || {})) {
+    out[meta.name || fieldId] = {
+      fieldId,
+      required: meta.required || false,
+      allowedValues: (meta.allowedValues || []).map((v: any) => ({
+        id: v.id ? String(v.id) : undefined,
+        name: v.name || v.value || String(v),
+      })),
+    };
+  }
+  return out;
+}
+
+/** Set a custom field on a Jira issue by field name (looks up fieldId from editmeta) */
+export async function setJiraField(issueKey: string, fieldName: string, value: any): Promise<void> {
+  const meta = await getJiraIssueEditMeta(issueKey);
+  const field = Object.entries(meta).find(([name]) => name.toLowerCase() === fieldName.toLowerCase());
+  if (!field) {
+    const available = Object.keys(meta).join(", ");
+    throw new Error(`Field "${fieldName}" not found. Available: ${available}`);
+  }
+  const [, { fieldId, allowedValues }] = field;
+  let fieldValue = value;
+  if (allowedValues.length > 0) {
+    const match = allowedValues.find(v => v.name.toLowerCase() === String(value).toLowerCase());
+    if (!match) throw new Error(`Invalid value "${value}" for field "${fieldName}". Allowed: ${allowedValues.map(v => v.name).join(", ")}`);
+    // Use id if available, otherwise name
+    fieldValue = match.id ? { id: match.id } : { name: match.name };
+  }
+  await jiraFetch(`/rest/api/3/issue/${issueKey}`, {
+    method: "PUT",
+    body: JSON.stringify({ fields: { [fieldId]: fieldValue } }),
+  });
+}
+
+/** Get available transitions for a Jira issue, with allowed field values for each */
+export async function getJiraTransitions(issueKey: string): Promise<Array<{
+  id: string;
+  name: string;
+  fields: Record<string, { required: boolean; allowedValues: string[] }>;
+}>> {
+  const result = await jiraFetch(`/rest/api/3/issue/${issueKey}/transitions?expand=transitions.fields`);
+  return (result.transitions || []).map((t: any) => {
+    const fields: Record<string, { required: boolean; allowedValues: string[] }> = {};
+    for (const [key, meta] of Object.entries<any>(t.fields || {})) {
+      fields[meta.name || key] = {
+        required: meta.required || false,
+        allowedValues: (meta.allowedValues || []).map((v: any) => v.name || v.value || String(v)),
+      };
+    }
+    return { id: t.id, name: t.to?.name || t.name, fields };
+  });
+}
+
+/** Transition a Jira issue to a new status */
+export async function transitionJiraIssue(issueKey: string, statusName: string): Promise<void> {
+  const result = await jiraFetch(`/rest/api/3/issue/${issueKey}/transitions`);
+  const transitions: Array<{ id: string; name: string }> = result.transitions || [];
+  const match = transitions.find(t => t.name.toLowerCase() === statusName.toLowerCase());
+  if (!match) {
+    const available = transitions.map(t => t.name).join(", ");
+    throw new Error(`No transition found for "${statusName}". Available: ${available}`);
+  }
+  await jiraFetch(`/rest/api/3/issue/${issueKey}/transitions`, {
+    method: "POST",
+    body: JSON.stringify({ transition: { id: match.id } }),
+  });
+}
+
+/** Assign a Jira issue to the current user, or a specific accountId */
+export async function assignJiraIssue(issueKey: string, accountId?: string): Promise<void> {
+  const id = accountId || await getMyAccountId();
+  await jiraFetch(`/rest/api/3/issue/${issueKey}/assignee`, {
+    method: "PUT",
+    body: JSON.stringify({ accountId: id }),
+  });
+}
+
 /** Get the current user's Jira account ID */
 let cachedAccountId: string | null = null;
 export async function getMyAccountId(): Promise<string> {

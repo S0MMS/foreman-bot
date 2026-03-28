@@ -2,10 +2,10 @@ workflow "Peer Review"
   inputs: topic (default "why every developer should learn functional programming")
 
   ask @flowbot-01 "Write a short, persuasive paragraph about: {topic}" -> argument
-  ask @flowbot-02 "Critically review this argument. Is it well-reasoned and convincing?\n\n{argument}" -> review
+  ask @flowbot-02 "Critically review this argument. Is it well-reasoned and convincing? {argument}" -> review
 
   if {review} means "the argument is convincing and well-reasoned"
-    send @flowbot-01 "Your argument passed peer review!\n\nReview: {review}"
+    send @flowbot-01 "Your argument passed peer review! Review: {review}"
   otherwise
-    ask @flowbot-01 "Revise your argument based on this feedback:\n\n{review}\n\nOriginal argument:\n{argument}" -> revised
-    send @flowbot-02 "Here is the revised version:\n\n{revised}"
+    ask @flowbot-01 "Revise your argument based on this feedback: {review} Original argument: {argument}" -> revised
+    send @flowbot-02 "Here is the revised version: {revised}"

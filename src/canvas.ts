@@ -81,28 +81,51 @@ export async function listChannelCanvases(
 ): Promise<Array<{ fileId: string; title: string }>> {
   const results: Array<{ fileId: string; title: string }> = [];
 
-  // Check channel tabs for the default canvas
+  // Check ALL channel tabs — canvases may appear as multiple tab entries
   try {
     const infoRes = await app.client.conversations.info({ channel });
     const channelData = infoRes.channel as any;
     const tabs: any[] = channelData?.properties?.tabs || [];
-    const canvasTab = tabs.find((t: any) => t.type === "canvas");
-    const defaultFileId = canvasTab?.data?.file_id || channelData?.properties?.meeting_notes?.file_id;
-    if (defaultFileId) {
-      results.push({ fileId: defaultFileId, title: canvasTab?.label || "Channel Canvas" });
-    }
-  } catch { /* ignore */ }
-
-  // List all canvas files in the channel
-  try {
-    const listRes = await (app.client.files as any).list({ channel, types: "spaces" });
-    for (const file of listRes?.files || []) {
-      if (!results.find(r => r.fileId === file.id)) {
-        results.push({ fileId: file.id, title: file.title || file.name || "Untitled Canvas" });
+    console.log(`[canvas] listChannelCanvases tabs for ${channel}:`, JSON.stringify(tabs));
+    for (const tab of tabs) {
+      const fileId = tab?.data?.file_id;
+      if (fileId && !results.find(r => r.fileId === fileId)) {
+        results.push({ fileId, title: tab.label || tab.data?.title || "Canvas" });
       }
     }
-  } catch { /* ignore */ }
+    // Also check legacy meeting_notes field
+    const legacyId = channelData?.properties?.meeting_notes?.file_id;
+    if (legacyId && !results.find(r => r.fileId === legacyId)) {
+      results.push({ fileId: legacyId, title: "Channel Canvas" });
+    }
+  } catch (err: any) {
+    console.warn(`[canvas] conversations.info failed:`, err?.data?.error || err?.message);
+  }
 
+  // Try files.list with both "spaces" and "canvas" types
+  // Also use this to fill in titles for canvases found via tabs with empty labels
+  for (const types of ["spaces", "canvas"]) {
+    try {
+      const listRes = await (app.client.files as any).list({ channel, types });
+      console.log(`[canvas] files.list types=${types} returned ${listRes?.files?.length ?? 0} files`);
+      for (const file of listRes?.files || []) {
+        const fileTitle = file.title || file.name || "Untitled Canvas";
+        const existing = results.find(r => r.fileId === file.id);
+        if (existing) {
+          // Update title if we have a better one (tab label was empty)
+          if (!existing.title || existing.title === "Canvas" || existing.title === "Channel Canvas") {
+            existing.title = fileTitle;
+          }
+        } else {
+          results.push({ fileId: file.id, title: fileTitle });
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[canvas] files.list types=${types} failed:`, err?.data?.error || err?.message);
+    }
+  }
+
+  console.log(`[canvas] listChannelCanvases result for ${channel}:`, results.map(r => `${r.title} (${r.fileId})`));
   return results;
 }
 
