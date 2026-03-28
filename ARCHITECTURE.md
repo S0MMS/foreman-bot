@@ -177,7 +177,20 @@ Bot sections are tagged with `*[bot-name] Heading*` so multiple bots can coexist
 
 ### Jira Tools
 
-`JiraCreateTicket`, `JiraReadTicket`, `JiraUpdateTicket`, `JiraSearch`, `JiraAddComment`, `JiraUpdateComment`, `JiraDeleteComment`
+| Tool | Description |
+|---|---|
+| `JiraCreateTicket` | Create a new Jira issue |
+| `JiraReadTicket` | Read a Jira issue by key |
+| `JiraUpdateTicket` | Update fields on a Jira issue |
+| `JiraSearch` | Search issues via JQL |
+| `JiraAddComment` | Add a comment to an issue |
+| `JiraUpdateComment` | Update an existing comment |
+| `JiraDeleteComment` | Delete a comment |
+| `JiraTransitionTicket` | Move a ticket to a new status (e.g. "In Progress", "Done") |
+| `JiraAssignTicket` | Assign a ticket to the current user or a specific account ID |
+| `JiraGetTransitions` | List available status transitions + required fields for a ticket |
+| `JiraGetFieldOptions` | List editable fields with allowed values (use before JiraSetField) |
+| `JiraSetField` | Set a custom field by name (e.g. Story Points, Work Type) |
 
 ### Confluence Tools
 
@@ -241,6 +254,7 @@ The Temporal worker starts automatically when Foreman boots (`index.ts`). If the
 | `delphiWorkflow` | `/cc delphi [--design\|--research\|--code] [--deep] #w1 #w2 #w3 "question"` | 3-phase Delphi: workers → judge → workers critique → judge final answer |
 | `flowspecWorkflow` | `/cc run <source> [workflow_name]` | Interprets a FlowSpec DSL workflow — the universal FlowSpec execution engine |
 | `flowspecTestWorkflow` | `/cc workflow flowspec-test <channelId> <prompt>` | End-to-end test: dispatches a single prompt to a bot and returns the response |
+| Pythia (FlowSpec) | `/cc run "Pythia" question="..." mode="code"` | 5-phase multi-model verification: explore → synthesize → critique → revise → fact-check. Evolution of Delphi using heterogeneous models (Claude + Gemini + GPT). See `flows/pythia.flow`. |
 
 ---
 

@@ -162,6 +162,17 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 | `CanvasUpdateById` | Update any canvas by file ID |
 | `CanvasDeleteById` | Delete a section from any canvas by file ID |
 | `DiagramCreate` | Create a Mermaid diagram and render it to the canvas |
+| `JiraCreateTicket` | Create a new Jira issue |
+| `JiraReadTicket` | Read a Jira issue by key |
+| `JiraUpdateTicket` | Update fields on a Jira issue |
+| `JiraSearch` | Search issues via JQL |
+| `JiraAddComment` | Add a comment to an issue |
+| `JiraUpdateComment` / `JiraDeleteComment` | Update or delete a comment |
+| `JiraTransitionTicket` | Move a ticket to a new status (e.g. "In Progress", "Done") |
+| `JiraAssignTicket` | Assign a ticket to yourself or a specific account ID |
+| `JiraGetTransitions` | List available transitions + required fields for a ticket |
+| `JiraGetFieldOptions` | List editable fields with allowed values (use before JiraSetField) |
+| `JiraSetField` | Set a custom field by name (e.g. Story Points, Work Type) |
 | `PostMessage` | Post a message to any Slack channel (auto-appends `— BotName (model)` signature) |
 | `ReadChannel` | Read recent message history from any Slack channel |
 
