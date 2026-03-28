@@ -10,7 +10,7 @@
 
 Flowspec is a minimal workflow description language for orchestrating AI bots. It is:
 
-- **Turing complete** — self-referential `call` + conditionals enable unbounded recursion. This is the first and primary design principle.
+- **Turing complete** — self-referential `run` + conditionals enable unbounded recursion. This is the first and primary design principle.
 - **Simple enough** for a non-engineer (e.g. a product manager) to write
 - **Expressive enough** to cover ~80% of common multi-agent workflow patterns
 
@@ -58,18 +58,36 @@ These workflow patterns cover the vast majority of real multi-agent orchestratio
 
 | Primitive | Purpose |
 |-----------|---------|
-| `ask @bot "..."` | Core action — dispatch prompt, wait for response |
+| `ask @bot "..."` | Core action — dispatch prompt to bot, start a Claude session, wait for response |
+| `send @bot "..."` / `send #channel "..."` | Fire-and-forget message — posts text, does NOT start a bot session |
 | `-> name` / `{name}` | Capture and reference output |
 | `at the same time` | Parallel block (wait for all) |
-| `at the same time, take the first` | Race block (first wins, cancel rest) |
+| `race` | Race block (first wins, cancel rest) |
 | `for each X in {list}` | Bounded iteration |
-| `repeat until {X} is above/equals/contains` | Convergence loop (with mandatory max) |
-| `if {X} contains/equals "Y"` / `otherwise` | Conditional |
+| `repeat until {X} is above/equals/contains/means` | Convergence loop (with mandatory max) |
+| `if {X} contains/equals/means "Y"` / `otherwise` | Conditional |
 | `pause for approval` | Human gate |
 | `within <duration>` | Timeout |
 | `retry N times` / `if it fails` | Error handling |
-| `call "Workflow"` | Sub-workflow |
-| `notify` | Fire-and-forget message |
+| `run "Workflow"` | Sub-workflow |
+| `stop` | Exit workflow with optional message |
+
+### `ask` vs `send` — Critical Distinction
+
+**`ask`** starts a Claude session. The bot receives the prompt, thinks, uses tools, and produces a response. The workflow waits for the bot to finish. Use `ask` when you need the bot to **do something** — read a file, write code, post to a channel, call an API.
+
+**`send`** posts a text message. No Claude session is started. The bot does not process the message. Use `send` for status updates, notifications, and announcements — messages that are informational, not instructions.
+
+```
+-- CORRECT: bot reads the ticket and acts on it
+ask @writer "Read Jira ticket PROJ-1234 and post a summary to #stakeholders" -> summary
+
+-- WRONG: this just posts text to the bot's channel — nobody processes it
+send @writer "Read Jira ticket PROJ-1234 and post a summary to #stakeholders"
+
+-- CORRECT use of send: posting a notification to a channel
+send #releases "Version 2.1 shipped"
+```
 
 ### Key Design Decisions
 
@@ -118,7 +136,7 @@ The `inputs:` line is optional but enables validation. The compiler can also inf
 ```
 @betty       -- a named bot (maps to a Slack channel)
 @coders      -- a bot pool (maps to multiple channels)
-#channel     -- a Slack channel (for notify)
+#channel     -- a Slack channel (for send)
 @chris       -- a human (for approval routing)
 ```
 
@@ -135,6 +153,7 @@ Small fixed set — no expression language:
 
 - `contains` — substring match
 - `equals` — exact match
+- `means` — semantic classification (see below)
 - `is above` / `is below` — numeric comparison
 - `is empty` / `is not empty` — presence check
 
@@ -144,6 +163,33 @@ For anything more complex, offload to a bot:
 ask @clive "Evaluate whether coverage dropped >5%. Respond VERDICT:YES or VERDICT:NO" -> check
 if {check} contains "VERDICT:YES"
   ...
+```
+
+### The `means` Operator
+
+`means` is the most powerful condition operator. It lets you branch on the **meaning** of a bot's response without forcing the PM to write VERDICT tags or structured output instructions.
+
+```
+ask @reviewer "Review this PR for quality and security issues" -> review
+
+if {review} means "approved"
+  ask @bot "Merge the PR"
+otherwise if {review} means "needs changes"
+  ask @bot "Fix the issues: {review}"
+otherwise if {review} means "rejected"
+  stop "PR rejected: {review}"
+```
+
+**How it works under the hood:** The compiler performs a two-pass transformation. First pass: it scans all `if {var} means "..."` conditions to collect the possible classifications for each variable. Second pass: it rewrites the upstream `ask` prompt to inject a classification instruction on the last line — asking the bot to append a `FLOWSPEC_CLASS:` tag. At runtime, the tag is stripped from the response (the PM never sees it) and stored in an internal `__class_varName` variable. The `means` condition checks against that variable.
+
+The PM writes natural conditions. The compiler handles the plumbing.
+
+`means` also works in convergence loops:
+
+```
+repeat until {verdict} means "approved", at most 3 times
+  ask @writer "Revise the draft based on: {feedback}" -> draft
+  ask @reviewer "Review this draft: {draft}" -> verdict
 ```
 
 ### Duration Syntax
@@ -180,7 +226,7 @@ workflow "Competitor Research"
 
 ```
 workflow "Find Vulnerability"
-  at the same time, take the first
+  race
     ask @betty "Find the vulnerability by reading logs" -> finding
     ask @clive "Find the vulnerability by reading code" -> finding
     ask @roger "Find the vulnerability by checking metrics" -> finding
@@ -232,7 +278,7 @@ workflow "Polish Draft"
     ask @clive "Revise based on: {feedback}" -> draft
     ask @roger "Score from 1-10, respond with just the number: {draft}" -> score
   if it never converges
-    notify @chris "Draft couldn't reach quality threshold after 5 rounds"
+    send @chris "Draft couldn't reach quality threshold after 5 rounds"
 ```
 
 > **`at most N times` is required** — compiler error without it.
@@ -255,7 +301,7 @@ workflow "Publish RFC"
 workflow "Quick Test"
   ask @clive "Run the full test suite" within 10 minutes -> results
     if it times out
-      notify @chris "Test suite timed out, needs manual run"
+      send @chris "Test suite timed out, needs manual run"
       stop
 ```
 
@@ -265,7 +311,7 @@ workflow "Quick Test"
 workflow "Deploy"
   ask @clive "Deploy main to staging", retry 2 times
     if it fails
-      notify @chris "Deploy failed after retries."
+      send @chris "Deploy failed after retries."
 ```
 
 ### Sub-Workflow
@@ -279,7 +325,7 @@ workflow "Review and Merge"
 
 workflow "Ship Feature"
   ask @clive "Implement {ticket} and open a PR" -> pr
-  call "Review and Merge" with pr_number = {pr}
+  run "Review and Merge" with pr_number = {pr}
 ```
 
 ---
@@ -303,7 +349,7 @@ workflow "Fix and PR"
     Start your response with VERDICT:PASS or VERDICT:FAIL.
   """ within 15 minutes -> test_result
     if it times out
-      notify @chris "Tests timed out for {bug}"
+      send @chris "Tests timed out for {bug}"
       stop
 
   if {test_result} contains "VERDICT:PASS"
@@ -322,10 +368,10 @@ workflow "Fix All Crash Bugs"
   """ -> bugs
 
   for each bug in {bugs}
-    call "Fix and PR" with bug = {bug}
+    run "Fix and PR" with bug = {bug}
 
   ask @betty "Summarize what was fixed and what failed" -> summary
-  notify #mfp-bugs "{summary}"
+  send #mfp-bugs "{summary}"
 ```
 
 ### Competitive Analysis Report
@@ -352,7 +398,7 @@ workflow "Competitive Analysis"
       pause for approval with message "Review revised analysis."
 
   ask @betty "Post to Confluence in the Product space: {analysis}"
-  notify @chris "Competitive analysis published to Confluence."
+  send @chris "Competitive analysis published to Confluence."
 ```
 
 ---
@@ -491,7 +537,7 @@ For each `.flow` file:
 |---------------|-------------------|
 | `ask @bot "X" -> name` | `const name = await executeActivity(dispatchToBot, { bot, prompt, sessionKey })` |
 | `at the same time { ... }` | `const [a, b, c] = await Promise.all([...])` |
-| `at the same time, take the first` | `Promise.race()` + `CancellationScope` |
+| `race` | `Promise.race()` + `CancellationScope` |
 | `for each x in {list}` | `for (const x of parseList(list)) { ... }` + continueAsNew every 100 |
 | `for each x, N at a time` | Batched `Promise.all` with concurrency semaphore |
 | `repeat until ... at most N` | `for` loop with condition check + continueAsNew each iteration |
@@ -500,8 +546,9 @@ For each `.flow` file:
 | `within <duration>` | `startToCloseTimeout` on activity |
 | `retry N times` | `RetryPolicy { maximumAttempts: N + 1 }` |
 | `if it fails` | `try/catch` around activity |
-| `call "Workflow"` | `await executeChild(workflowFn, { args })` |
-| `notify` | Fire-and-forget `executeActivity(postSlackMessage)` |
+| `run "Workflow"` | `await executeChild(workflowFn, { args })` |
+| `send` | Fire-and-forget `executeActivity(postStatus)` |
+| `stop` | `throw FlowStop` (caught at workflow level) |
 | `stop` | `return` from workflow function |
 
 ### Compilation Pipeline
@@ -647,7 +694,7 @@ The runtime automatically:
 
 ## Design Philosophy
 
-FlowSpec's **first and primary design principle** is Turing completeness. Self-referential `call "Workflow"` combined with `if/otherwise` conditional branching gives the language unbounded recursion with conditional base cases. Everything else — simplicity, PM-readability, efficient AI-to-human communication — is secondary to this.
+FlowSpec's **first and primary design principle** is Turing completeness. Self-referential `run "Workflow"` combined with `if/otherwise` conditional branching gives the language unbounded recursion with conditional base cases. Everything else — simplicity, PM-readability, efficient AI-to-human communication — is secondary to this.
 
 FlowSpec keeps its primitive count minimal. The complexity lives in the bots and the runtime — not in the language itself. The language handles common patterns simply; the escape hatch for edge cases is writing a Temporal workflow in TypeScript directly.
 

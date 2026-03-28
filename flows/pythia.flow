@@ -1,0 +1,136 @@
+workflow "Pythia"
+  inputs: question (required), mode (default "code")
+
+  -- PHASE 1: Independent exploration (diversity)
+  -- Multi-model workers for true epistemic diversity
+  -- Identical prompts to maximize independent coverage
+  at the same time
+    ask @claude-worker """
+      {question}
+
+      For every factual claim, cite your source:
+      - Code: file_path:line_number
+      - Knowledge: [FROM KNOWLEDGE]
+      - Uncertain: [UNCERTAIN: reason]
+      Tag each section HIGH/MEDIUM/LOW confidence.
+    """ -> answer1
+
+    ask @gemini-worker """
+      {question}
+
+      For every factual claim, cite your source:
+      - Code: file_path:line_number
+      - Knowledge: [FROM KNOWLEDGE]
+      - Uncertain: [UNCERTAIN: reason]
+      Tag each section HIGH/MEDIUM/LOW confidence.
+    """ -> answer2
+
+    ask @gpt-worker """
+      {question}
+
+      For every factual claim, cite your source:
+      - Code: file_path:line_number
+      - Knowledge: [FROM KNOWLEDGE]
+      - Uncertain: [UNCERTAIN: reason]
+      Tag each section HIGH/MEDIUM/LOW confidence.
+    """ -> answer3
+
+  -- PHASE 2: Synthesis + Verification (structured verification)
+  -- Dedicated judge with clean context (separate from Phase 1 explorer)
+  -- Judge sees full reasoning chains (not summaries)
+  -- Judge must self-structure before synthesizing
+  ask @claude-judge """
+    Three independent experts answered: "{question}"
+
+    WORKER 1 (Claude): {answer1}
+    WORKER 2 (Gemini): {answer2}
+    WORKER 3 (GPT): {answer3}
+
+    Before writing your synthesis:
+    1. List areas where all workers AGREE
+    2. List areas where workers DISAGREE (with each position)
+    3. List claims made by only ONE worker
+
+    Then for each claim: verify it yourself using tools.
+    Label every claim CONFIRMED, REFUTED, or UNVERIFIED.
+    Write your synthesis using only CONFIRMED claims.
+    Flag UNVERIFIED claims explicitly as uncertain.
+    Include a Confidence & Caveats section at the end.
+  """ -> synthesis
+
+  -- PHASE 3: Heterogeneous critique (adversarial pressure)
+  -- Different models critique a synthesis they didn't produce
+  -- Each model brings different training data and reasoning patterns
+  at the same time
+    ask @claude-worker """
+      A judge synthesized answers to: "{question}"
+      Synthesis: {synthesis}
+
+      YOUR ROLE: Verify FACTUAL ACCURACY.
+      Check specific claims against the actual code/sources.
+      Flag anything the judge accepted without proper evidence.
+    """ -> critique_accuracy
+
+    ask @gemini-worker """
+      A judge synthesized answers to: "{question}"
+      Synthesis: {synthesis}
+
+      YOUR ROLE: Check COMPLETENESS.
+      What important aspects did the judge miss entirely?
+      What questions does this answer leave unanswered?
+    """ -> critique_completeness
+
+    ask @gpt-worker """
+      A judge synthesized answers to: "{question}"
+      Synthesis: {synthesis}
+
+      YOUR ROLE: DEVIL'S ADVOCATE.
+      Find the strongest argument that the key conclusions are wrong.
+      Focus on unsupported claims, unstated assumptions, underestimated risks.
+      If it's strong, explain WHY and what would have to be true for it to fail.
+      Do not soften valid criticisms.
+    """ -> critique_adversarial
+
+  -- PHASE 4: Targeted revision (not full regeneration)
+  ask @claude-judge """
+    Your synthesis of: "{question}"
+    Was: {synthesis}
+
+    Three critics reviewed it:
+    ACCURACY CHECK (Claude): {critique_accuracy}
+    COMPLETENESS CHECK (Gemini): {critique_completeness}
+    DEVIL'S ADVOCATE (GPT): {critique_adversarial}
+
+    Address ONLY the substantive issues raised.
+    Do not rewrite sections that weren't challenged.
+    For contested claims, provide stronger evidence or mark as uncertain.
+    End with an updated Confidence & Caveats section.
+  """ -> revised
+
+  -- PHASE 5: Independent fact-check (Chain of Verification)
+  -- Different model from the judge. Fresh context. No debate history.
+  ask @gemini-worker (new session) """
+    Verify every factual claim in this text.
+    You have NO context about how this was produced.
+    For each claim, check it independently using tools.
+
+    TEXT TO VERIFY:
+    {revised}
+
+    For each claim you check, output:
+    VERIFIED: [claim] — [evidence]
+    UNVERIFIABLE: [claim] — [what you looked for]
+    REFUTED: [claim] — [what's actually true]
+
+    Then output a VERIFICATION SUMMARY with counts.
+  """ -> verification
+
+  -- Final output: revised answer + independent verification notes
+  send #output """
+    ANSWER:
+    {revised}
+
+    ---
+    INDEPENDENT VERIFICATION:
+    {verification}
+  """
