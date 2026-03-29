@@ -1,0 +1,11 @@
+-- Test: run "Workflow" -> result capture
+-- Parent calls Child, captures output, sends it to a second bot
+
+workflow "Child Task"
+  inputs: subject
+  ask @flowbot-01 "In exactly one sentence, describe {subject}." -> description
+
+workflow "Run Capture Test"
+  inputs: subject (default "the ocean")
+  run "Child Task" with subject = {subject} -> child_result
+  send @flowbot-02 "The child workflow returned: {child_result}"

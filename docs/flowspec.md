@@ -1,7 +1,7 @@
 # Flowspec: A Workflow Description Language for AI Bot Orchestration
 
-**Status:** Design Spec (Pre-Implementation)
-**Date:** 2026-03-25
+**Status:** Implemented (V1)
+**Date:** 2026-03-25 (spec), 2026-03-28 (implementation)
 **Authors:** Chris Shreve + Delphi research process (3 rounds, 6 agents)
 
 ---
@@ -69,7 +69,7 @@ These workflow patterns cover the vast majority of real multi-agent orchestratio
 | `pause for approval` | Human gate |
 | `within <duration>` | Timeout |
 | `retry N times` / `if it fails` | Error handling |
-| `run "Workflow"` | Sub-workflow |
+| `run "Workflow" [-> name]` | Sub-workflow (with optional named capture) |
 | `stop` | Exit workflow with optional message |
 
 ### `ask` vs `send` — Critical Distinction
@@ -109,7 +109,7 @@ ask @clive """
 
 **Explicit named outputs only.** Every `ask` that produces needed output must use `-> name`. No implicit "previous result" — it's fragile and breaks when you insert steps.
 
-**Structured conditions.** `if {X} contains "Y"` uses substring matching. To prevent false matches on LLM free-text, the compiler injects structured-output instructions (VERDICT tags) into prompts whose output feeds an `if` condition.
+**Structured conditions.** `if {X} contains "Y"` uses substring matching. `if {X} means "Y"` uses a separate follow-up classification call — the compiler dispatches a focused question to the bot after the main response, keeping the original prompt clean. For `contains`, explicit VERDICT tags in the prompt are still recommended for reliability.
 
 ---
 
@@ -149,13 +149,33 @@ ask @clive "Use this: {result_name}"        -- reference
 
 ### Conditions
 
-Small fixed set — no expression language:
+Small fixed set of operators:
 
 - `contains` — substring match
 - `equals` — exact match
 - `means` — semantic classification (see below)
 - `is above` / `is below` — numeric comparison
 - `is empty` / `is not empty` — presence check
+
+#### Compound Conditions (AND / OR)
+
+Conditions can be combined with `and` or `or`:
+
+```
+if {score} is above 80 and {review} means "approved"
+  ask @bot "Merge the PR"
+
+if {status} equals "done" or {status} equals "skipped"
+  send #output "Finished"
+
+repeat until {score} is above 8 and {verdict} means "approved", at most 5 times
+  ...
+```
+
+**Rules:**
+- All `and` or all `or` in one expression — no mixing (e.g. `A and B or C` is a parse error)
+- No parentheses or precedence — keep it flat and readable
+- Works everywhere conditions appear: `if`, `otherwise if`, `repeat until`
 
 For anything more complex, offload to a bot:
 
@@ -180,9 +200,9 @@ otherwise if {review} means "rejected"
   stop "PR rejected: {review}"
 ```
 
-**How it works under the hood:** The compiler performs a two-pass transformation. First pass: it scans all `if {var} means "..."` conditions to collect the possible classifications for each variable. Second pass: it rewrites the upstream `ask` prompt to inject a classification instruction on the last line — asking the bot to append a `FLOWSPEC_CLASS:` tag. At runtime, the tag is stripped from the response (the PM never sees it) and stored in an internal `__class_varName` variable. The `means` condition checks against that variable.
+**How it works under the hood:** The compiler builds a means-map in a single pre-execution pass: it scans all `if {var} means "..."` conditions to collect the possible classification values for each captured variable. At runtime, after an `ask` step captures a response into a variable that appears in the means-map, the compiler automatically dispatches a follow-up classification call to the same bot: *"Based on your previous response, reply with ONLY one of: approved, needs changes, rejected"*. The bot's one-word reply is stored in an internal `__class_varName` variable. The `means` condition checks against that variable.
 
-The PM writes natural conditions. The compiler handles the plumbing.
+This approach keeps the original prompt clean (no injected `FLOWSPEC_CLASS:` tags) and produces more reliable classifications because the bot answers a focused, constrained question separately from its main work.
 
 `means` also works in convergence loops:
 
@@ -328,6 +348,13 @@ workflow "Ship Feature"
   run "Review and Merge" with pr_number = {pr}
 ```
 
+With named capture, child workflow variables are serialized under a single name in the parent scope instead of merging into the parent's variable namespace:
+
+```
+  run "Review and Merge" with pr_number = {pr} -> review_result
+  -- {review_result} contains JSON of the child's public variables
+```
+
 ---
 
 ## 5. End-to-End Examples
@@ -462,7 +489,9 @@ After 20+ messages in a session, Claude's context fills up. The bridge should mo
 
 #### 6e. Condition Fragility
 
-Solved by the VERDICT tag convention. The compiler injects structured output instructions into prompts whose output feeds an `if` condition. `contains` matches against tags, not free text.
+Two strategies depending on the condition type:
+- **`means`** — solved by follow-up classification. After the main `ask` completes, the compiler dispatches a separate focused call asking the bot to classify its own response into one of the expected values. Clean separation keeps the original prompt uncontaminated.
+- **`contains`** — VERDICT tag convention still recommended. PMs should include explicit output format instructions (e.g. "Respond VERDICT:YES or VERDICT:NO") in prompts whose output feeds a `contains` condition.
 
 #### 6f. List Parsing
 
@@ -504,6 +533,14 @@ Deferred to V2. For V1, external triggers (GitHub webhooks, cron) invoke `/cc ru
 
 `/cc check "Fix All Crash Bugs"` — parse, validate bot names, check unresolved variables, estimate cost. Essential UX for non-engineers.
 
+### Known Issues — Deferred
+
+These are validated concerns (identified via Pythia multi-model analysis, 2026-03-28) that we intend to fix but are not blocking V1:
+
+- **Bot contention / static channel provisioning** — FlowSpec's parallelism is bounded by pre-provisioned Slack channels. Scaling requires manually creating channels and updating `bots.json`. Dynamic bot pool creation is needed long-term but not for current workflows. See §6a for the bot pool design.
+- **Recursion depth limit for `run`** — `repeat until` requires `at most N`, but `run` has no equivalent guard. Mutually recursive workflows (`A` calls `B`, `B` calls `A`) could burn tokens indefinitely. Needs cycle detection or a max recursion depth at compile time.
+- **Security / trust model** — No authorization model (who can `/cc run`?), no capability scoping (prompts can trigger destructive commands), no cross-workflow filesystem isolation. The bridge's existing tool approval gates mitigate this for now. The spec should explicitly state the trust model before production use.
+
 ### Known 20% — Out of Scope (Write in TypeScript)
 
 - **Dynamic routing** — bot decides which bot to call next
@@ -512,7 +549,6 @@ Deferred to V2. For V1, external triggers (GitHub webhooks, cron) invoke `/cc ru
 - **Saga / compensation** — "undo step 1 if step 3 fails"
 - **Priority / cancellation / preemption** — interrupt running workflows
 - **Workflow versioning / migration** — in-flight workflow upgrades
-- **Complex expression language** — compound boolean conditions
 
 The escape hatch for the remaining 20% is writing the Temporal workflow in TypeScript directly.
 
@@ -542,11 +578,12 @@ For each `.flow` file:
 | `for each x, N at a time` | Batched `Promise.all` with concurrency semaphore |
 | `repeat until ... at most N` | `for` loop with condition check + continueAsNew each iteration |
 | `if {x} contains "Y"` | `if (x.includes("Y"))` |
+| `{a} op "X" and {b} op "Y"` | `evaluateCondition` recurses: `and` → `every()`, `or` → `some()` |
 | `pause for approval` | `await condition(() => signals.approval !== undefined)` |
 | `within <duration>` | `startToCloseTimeout` on activity |
 | `retry N times` | `RetryPolicy { maximumAttempts: N + 1 }` |
 | `if it fails` | `try/catch` around activity |
-| `run "Workflow"` | `await executeChild(workflowFn, { args })` |
+| `run "Workflow" [-> name]` | `await executeChild(workflowFn, { args })` — with `-> name`, child workflow vars are captured into parent scope under `name` |
 | `send` | Fire-and-forget `executeActivity(postStatus)` |
 | `stop` | `throw FlowStop` (caught at workflow level) |
 | `stop` | `return` from workflow function |

@@ -20,6 +20,17 @@ export interface Condition {
   value?: string;             // not needed for is empty / is not empty
 }
 
+export interface AndCondition {
+  and: ConditionExpr[];
+}
+
+export interface OrCondition {
+  or: ConditionExpr[];
+}
+
+/** A condition expression: single condition, or AND/OR compound (no mixing). */
+export type ConditionExpr = Condition | AndCondition | OrCondition;
+
 // ── Steps (AST nodes) ────────────────────────────────────────────────────────
 
 export interface AskStep {
@@ -69,7 +80,7 @@ export interface ForEachStep {
 
 export interface RepeatUntilStep {
   type: 'repeat_until';
-  condition: Condition;
+  condition: ConditionExpr;
   maxIterations: number;      // at most N times (required)
   body: Step[];
   noConvergeHandler?: Step[]; // if it never converges
@@ -78,10 +89,10 @@ export interface RepeatUntilStep {
 
 export interface IfStep {
   type: 'if';
-  condition: Condition;
+  condition: ConditionExpr;
   body: Step[];
   otherwiseIfs?: Array<{      // otherwise if ...
-    condition: Condition;
+    condition: ConditionExpr;
     body: Step[];
   }>;
   otherwise?: Step[];         // otherwise (final else)
@@ -101,6 +112,7 @@ export interface RunStep {
   workflowName: string;
   args?: Record<string, string>; // with key = {value}
   maxTotal?: number;          // at most N total
+  capture?: string;           // run "X" -> capture
   line: number;
 }
 

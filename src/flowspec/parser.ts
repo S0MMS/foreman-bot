@@ -7,7 +7,7 @@
  */
 
 import type {
-  FlowFile, Workflow, WorkflowInput, Step, Condition, ConditionOp,
+  FlowFile, Workflow, WorkflowInput, Step, Condition, ConditionExpr, ConditionOp,
   AskStep, SendStep, ParallelStep, RaceStep, ForEachStep,
   RepeatUntilStep, IfStep, ApprovalStep, RunStep, StopStep,
 } from './ast.js';
@@ -153,8 +153,43 @@ class Parser {
 
   // ── Condition parsing ────────────────────────────────────────────────────
 
-  /** Parse a condition like: {review} means "security issue" */
-  private parseCondition(text: string, lineNum: number): Condition {
+  /** Parse a condition expression, possibly compound (AND/OR). */
+  private parseCondition(text: string, lineNum: number): ConditionExpr {
+    // Split on " and " / " or " to detect compound conditions.
+    // We try " and " first, then " or ". No mixing allowed.
+    const andParts = this.splitConditionParts(text, ' and ');
+    if (andParts.length > 1) {
+      return { and: andParts.map(p => this.parseSingleCondition(p, lineNum)) };
+    }
+    const orParts = this.splitConditionParts(text, ' or ');
+    if (orParts.length > 1) {
+      return { or: orParts.map(p => this.parseSingleCondition(p, lineNum)) };
+    }
+    return this.parseSingleCondition(text, lineNum);
+  }
+
+  /**
+   * Split condition text on a conjunction keyword, but only outside quoted strings.
+   * Returns the original text in a single-element array if the keyword isn't found.
+   */
+  private splitConditionParts(text: string, conjunction: string): string[] {
+    const parts: string[] = [];
+    let inQuote = false;
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '"') inQuote = !inQuote;
+      if (!inQuote && text.slice(i, i + conjunction.length) === conjunction) {
+        parts.push(text.slice(start, i).trim());
+        i += conjunction.length - 1;
+        start = i + 1;
+      }
+    }
+    parts.push(text.slice(start).trim());
+    return parts.length > 1 ? parts : [text];
+  }
+
+  /** Parse a single (non-compound) condition like: {review} means "security issue" */
+  private parseSingleCondition(text: string, lineNum: number): Condition {
     // Extract variable: {varName}
     const varMatch = text.match(/^\{(\w+)\}\s+(.+)$/);
     if (!varMatch) throw new ParseError(lineNum, `Expected condition like {variable} <op> "value", got: ${text}`);
@@ -226,9 +261,16 @@ class Parser {
     const bot = botMatch[1];
     text = text.slice(botMatch[0].length);
 
+    // Handle (new session) modifier before the prompt
+    const step: AskStep = { type: 'ask', bot, prompt: '', line: line.num };
+    if (text.startsWith('(new session)')) {
+      step.newSession = true;
+      text = text.slice('(new session)'.length).trim();
+    }
+
     // Extract prompt (possibly multi-line)
     let prompt: string;
-    let rest: string;
+    let rest: string = '';
     if (text.startsWith('"""')) {
       // Back up: need to handle multi-line from current position
       const tripleEnd = text.indexOf('"""', 3);
@@ -238,25 +280,27 @@ class Parser {
       } else {
         // Multi-line triple quote
         const parts = [text.slice(3)];
+        let foundClose = false;
         while (!this.atEnd()) {
           const next = this.advance();
           const closeIdx = next.text.indexOf('"""');
           if (closeIdx !== -1) {
             parts.push(next.text.slice(0, closeIdx));
             rest = next.text.slice(closeIdx + 3).trim();
+            foundClose = true;
             break;
           }
           parts.push(next.text);
         }
+        if (!foundClose) throw new ParseError(line.num, 'Unterminated triple-quoted string in ask');
         prompt = parts.join('\n').trim();
-        rest = rest!;
       }
     } else {
       [prompt, rest] = this.extractQuoted(text, line.num);
     }
 
     // Parse modifiers from rest of line
-    const step: AskStep = { type: 'ask', bot, prompt, line: line.num };
+    step.prompt = prompt;
 
     // -> capture
     const captureMatch = rest.match(/->\s*(\w+)/);
@@ -329,8 +373,33 @@ class Parser {
     const targetType: 'bot' | 'channel' | 'human' = rawTarget.startsWith('#') ? 'channel' : 'bot';
     const target = rawTarget.slice(1); // strip @ or #
 
-    const rest = text.slice(targetMatch[0].length);
-    const [message] = this.extractQuoted(rest, line.num);
+    let remaining = text.slice(targetMatch[0].length);
+    let message: string;
+
+    if (remaining.startsWith('"""')) {
+      const endInLine = remaining.indexOf('"""', 3);
+      if (endInLine !== -1) {
+        message = remaining.slice(3, endInLine).trim();
+      } else {
+        // Multi-line triple quote
+        const parts = [remaining.slice(3)];
+        let found = false;
+        while (!this.atEnd()) {
+          const next = this.advance();
+          const closeIdx = next.text.indexOf('"""');
+          if (closeIdx !== -1) {
+            parts.push(next.text.slice(0, closeIdx));
+            found = true;
+            break;
+          }
+          parts.push(next.text);
+        }
+        if (!found) throw new ParseError(line.num, 'Unterminated triple-quoted string in send');
+        message = parts.join('\n').trim();
+      }
+    } else {
+      [message] = this.extractQuoted(remaining, line.num);
+    }
 
     return { type: 'send', target, targetType, message, line: line.num };
   }
@@ -359,9 +428,15 @@ class Parser {
     const baseIndent = lines[0].indent;
     const branches: Step[][] = [];
     let current: Line[] = [];
+    let inTripleQuote = false;
 
     for (const line of lines) {
-      if (line.indent === baseIndent && current.length > 0) {
+      // Track triple-quoted strings so closing """ lines don't split branches
+      const wasInTripleQuote = inTripleQuote;
+      const tripleCount = (line.text.match(/"""/g) || []).length;
+      if (tripleCount % 2 === 1) inTripleQuote = !inTripleQuote;
+
+      if (!wasInTripleQuote && line.indent === baseIndent && current.length > 0) {
         branches.push(this.parseSteps(current, baseIndent));
         current = [];
       }
@@ -545,12 +620,12 @@ class Parser {
 
     if (afterName) {
       // with key = {value}, key2 = {value2}
-      const withMatch = afterName.match(/^with\s+(.+?)(?:,\s*at most|$)/);
+      const withMatch = afterName.match(/^with\s+(.+?)(?:,\s*at most|\s*->|$)/);
       if (withMatch) {
         step.args = {};
         const pairs = withMatch[1].split(/,\s*/);
         for (const pair of pairs) {
-          const kv = pair.match(/(\w+)\s*=\s*(.+)/);
+          const kv = pair.match(/(\w+)\s*=\s*(.+?)(?:\s*->|$)/);
           if (kv) {
             step.args[kv[1]] = kv[2].trim();
           }
@@ -561,6 +636,12 @@ class Parser {
       const totalMatch = afterName.match(/at most\s+(\d+)\s+total/);
       if (totalMatch) {
         step.maxTotal = parseInt(totalMatch[1], 10);
+      }
+
+      // -> capture
+      const captureMatch = afterName.match(/->\s*(\w+)/);
+      if (captureMatch) {
+        step.capture = captureMatch[1];
       }
     }
 

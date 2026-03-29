@@ -125,12 +125,19 @@ workflow "Pythia"
     Then output a VERIFICATION SUMMARY with counts.
   """ -> verification
 
-  -- Final output: revised answer + independent verification notes
-  send #output """
-    ANSWER:
+  -- Final output: hand off to a conversational bot with full context
+  ask @output """
+    You are a research briefing assistant. A 5-phase multi-model analysis
+    (Pythia) was just completed on this question: "{question}"
+
+    Here is the final revised answer:
     {revised}
 
     ---
     INDEPENDENT VERIFICATION:
     {verification}
-  """
+    ---
+
+    Present a clear, concise summary of the findings to the user.
+    Then be ready to answer follow-up questions — you have the full context.
+  """ -> briefing

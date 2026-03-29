@@ -1,6 +1,6 @@
 # FlowSpec — Implementation Status
 
-**Last updated:** 2026-03-26
+**Last updated:** 2026-03-29
 
 ---
 
@@ -18,11 +18,21 @@ FlowSpec is a minimal workflow DSL for orchestrating AI bots that compiles to Te
 | 2 | Parser (`.flow` text -> AST) | **Done** (2026-03-26) | ~660 lines | Hand-written recursive descent in `src/flowspec/parser.ts` |
 | 3 | Compiler (AST -> Temporal TypeScript) | **Done** (2026-03-26) | ~340 lines | Interpreter in `src/flowspec/compiler.ts` — all 10 primitives + `means` two-pass |
 | 4 | `/cc run` + `/cc check` + bot registry | **Done** (2026-03-26) | ~130 lines | `/cc run`, `/cc check`, `/cc bots` + `~/.foreman/bots.json` |
-| 5 | First `.flow` file | Not started | — | Test generation workflow (TECHOPS-2186) |
+| 5 | First `.flow` files | **Done** (2026-03-28) | — | 3 workflows authored: `hello-world.flow`, `peer-review.flow`, `pythia.flow`. Pythia is the flagship — 5-phase multi-model verification. TECHOPS-2186 test generation workflow not yet written. |
 | 6 | Bot pools + shared bot mutex | Deferred | — | Not needed yet — each workflow gets its own bot |
 | 7 | Observability (live status thread) | Deferred | — | Status updates in Slack as workflow progresses |
 
 **Total estimated new code for Phases 1-4: ~1,000-1,200 lines of TypeScript.**
+
+### Known Issues (from Pythia analysis, 2026-03-28)
+
+| Issue | Status | Priority |
+|-------|--------|----------|
+| `run "Workflow" -> result` capture syntax | **Done** (2026-03-29) | High — spec's own example is broken without it |
+| Compound boolean conditions (`AND`/`OR`) | **Done** (2026-03-29) | High — day-one need for real workflows |
+| Bot contention / static channel provisioning | Deferred | Architectural — needs dynamic bot pools |
+| `run` recursion depth limit | Deferred | Safety — needs cycle detection or max depth |
+| Security / trust model | Deferred | Production blocker but not V1 |
 
 ### What each phase produces
 
@@ -34,7 +44,10 @@ FlowSpec is a minimal workflow DSL for orchestrating AI bots that compiles to Te
 
 **Phase 4 — `/cc run` + `/cc check` + bot registry.** The Slack commands that invoke and validate workflows. `/cc check "Workflow"` parses and validates without executing (bot names exist, variables resolve, no unguarded recursion). `/cc run "Workflow" with param = value` parses, compiles, registers the compiled workflow with the Temporal worker, and starts execution. Bot registry (`~/.foreman/bots.json`) maps `@clive` -> channel ID so the compiler can resolve bot references.
 
-**Phase 5 — First `.flow` file.** Write the test generation workflow targeting TECHOPS-2186/2187/2188 and run it for real. This is the validation that everything works end-to-end.
+**Phase 5 — First `.flow` files.** Three workflows authored in `flows/`:
+- `hello-world.flow` — minimal: one `ask`, one `send`, tests basic dispatch + variable passing
+- `peer-review.flow` — uses `means` operator for semantic branching on review outcome
+- `pythia.flow` — flagship 5-phase multi-model verification workflow (parallel fan-out, synthesis, heterogeneous critique, targeted revision, independent fact-check). Evolution of Delphi using model diversity (Claude + Gemini + GPT). Also available on canvas. TECHOPS-2186 test generation workflow (the original Phase 5 target) not yet written.
 
 ### Key simplification: one bot per workflow
 

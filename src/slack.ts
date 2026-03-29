@@ -1256,6 +1256,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
               // Canvas returns HTML: convert <br> to newlines, decode entities, strip tags
               source = preBlockMatch[1]
                 .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/&quot;/g, '"')
                 .replace(/&gt;/g, ">")
                 .replace(/&lt;/g, "<")
                 .replace(/&amp;/g, "&")
@@ -1302,6 +1303,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             if (preBlockMatch) {
               source = preBlockMatch[1]
                 .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/&quot;/g, '"')
                 .replace(/&gt;/g, ">")
                 .replace(/&lt;/g, "<")
                 .replace(/&amp;/g, "&")

@@ -31,8 +31,7 @@ import {
   interpolate,
   resolveBot,
   evaluateCondition,
-  extractClassification,
-  augmentMeansPrompts,
+  buildMeansMap,
 } from './runtime.js';
 
 // ── Activity proxies ─────────────────────────────────────────────────────────
@@ -53,6 +52,7 @@ interface FlowContext {
   botRegistry: Record<string, string>;
   allWorkflows: Workflow[];
   reportChannelId?: string;
+  meansMap: Map<string, string[]>;
 }
 
 class FlowStop {
@@ -80,9 +80,8 @@ export async function flowspecWorkflow(
     botRegistry,
     allWorkflows: workflows,
     reportChannelId,
+    meansMap: buildMeansMap(workflow),
   };
-
-  augmentMeansPrompts(workflow);
 
   let approvalResult: { approved: boolean; reason: string } | null = null;
   setHandler(approvalSignal, (approved: boolean, reason?: string) => {
@@ -158,10 +157,13 @@ async function executeAsk(ctx: FlowContext, step: AskStep): Promise<void> {
   }
 
   if (step.capture) {
-    const { cleaned, classification } = extractClassification(result);
-    ctx.vars[step.capture] = cleaned;
-    if (classification !== undefined) {
-      ctx.vars[`__class_${step.capture}`] = classification;
+    ctx.vars[step.capture] = result;
+
+    const meansValues = ctx.meansMap.get(step.capture);
+    if (meansValues) {
+      const classPrompt = `Based on your previous response, reply with ONLY one of: ${meansValues.join(', ')}`;
+      const classification = await dispatchToBot(channelId, classPrompt);
+      ctx.vars[`__class_${step.capture}`] = classification.trim().toLowerCase();
     }
   }
 }
@@ -330,9 +332,19 @@ async function executeRun(ctx: FlowContext, step: RunStep): Promise<void> {
     args: [ctx.allWorkflows, step.workflowName, childInputs, ctx.botRegistry, ctx.reportChannelId],
   });
 
-  for (const [key, value] of Object.entries(result)) {
-    if (!key.startsWith('__')) {
-      ctx.vars[key] = value;
+  if (step.capture) {
+    // Named capture: serialize child's public vars under the capture name
+    const publicVars: Record<string, string> = {};
+    for (const [key, value] of Object.entries(result)) {
+      if (!key.startsWith('__')) publicVars[key] = value;
+    }
+    ctx.vars[step.capture] = JSON.stringify(publicVars);
+  } else {
+    // No capture: merge child vars into parent (backward compat)
+    for (const [key, value] of Object.entries(result)) {
+      if (!key.startsWith('__')) {
+        ctx.vars[key] = value;
+      }
     }
   }
 }
@@ -345,5 +357,6 @@ function cloneContext(ctx: FlowContext): FlowContext {
     botRegistry: ctx.botRegistry,
     allWorkflows: ctx.allWorkflows,
     reportChannelId: ctx.reportChannelId,
+    meansMap: ctx.meansMap,
   };
 }

@@ -1,0 +1,23 @@
+-- Compound Conditions Test
+-- Demonstrates AND / OR logic in FlowSpec
+
+workflow "Compound Test"
+
+  -- Phase 1: Get two assessments from different bots
+  ask @flowbot-01 "Rate the quality of this statement on a scale of 1-10 (respond with ONLY a number): 'TypeScript is the best language for building Slack bots'" -> score
+
+  ask @flowbot-02 "Do you approve of using TypeScript for Slack bot development? Give a one-sentence answer." -> review
+
+  -- Phase 2: AND — both conditions must be true
+  if {score} is above 5 and {review} means "approved"
+    send #output "AND passed: score={score} and review was positive"
+  otherwise
+    send #output "AND failed: score={score} and/or review was not approved"
+
+  -- Phase 3: OR — either condition is enough
+  if {score} is above 9 or {review} means "approved"
+    send #output "OR passed: high score or positive review (score={score})"
+  otherwise
+    send #output "OR failed: neither high score nor approval"
+
+  send #output "Compound conditions test complete."

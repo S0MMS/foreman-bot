@@ -5,11 +5,7 @@
  * the Temporal workflow sandbox. No Temporal imports here.
  */
 
-import type { Workflow, Step, Condition } from './ast.js';
-
-// ── Constants ────────────────────────────────────────────────────────────────
-
-export const FLOWSPEC_CLASS_PREFIX = 'FLOWSPEC_CLASS:';
+import type { Workflow, Step, Condition, ConditionExpr } from './ast.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,8 +35,15 @@ export function resolveBot(botRegistry: Record<string, string>, botName: string)
 
 // ── Condition Evaluation ─────────────────────────────────────────────────────
 
-/** Evaluate a FlowSpec condition against the current variable state. */
-export function evaluateCondition(vars: FlowVars, cond: Condition): boolean {
+/** Evaluate a FlowSpec condition expression (single or compound). */
+export function evaluateCondition(vars: FlowVars, cond: ConditionExpr): boolean {
+  if ('and' in cond) return cond.and.every(c => evaluateCondition(vars, c));
+  if ('or' in cond) return cond.or.some(c => evaluateCondition(vars, c));
+  return evaluateSingleCondition(vars, cond);
+}
+
+/** Evaluate a single (leaf) condition. */
+function evaluateSingleCondition(vars: FlowVars, cond: Condition): boolean {
   const value = vars[cond.variable] || '';
 
   switch (cond.op) {
@@ -57,45 +60,24 @@ export function evaluateCondition(vars: FlowVars, cond: Condition): boolean {
     case 'is below':
       return parseFloat(value) < parseFloat(cond.value || '0');
     case 'means': {
-      // Check the pre-extracted classification stored by extractClassification
       const classification = vars[`__class_${cond.variable}`] || '';
       return classification.toLowerCase().trim() === (cond.value || '').toLowerCase().trim();
     }
   }
 }
 
-// ── Classification Extraction ────────────────────────────────────────────────
+// ── Means Operator — Map Builder ─────────────────────────────────────────────
 
 /**
- * Extract the FLOWSPEC_CLASS tag from the last line of bot output.
- * Returns the cleaned text (tag stripped) and the classification value.
- * If no tag is found, returns the original text unchanged.
+ * Walk the AST and collect all `means` conditions into a map of
+ * variable name → list of classification values.
+ * Used by the compiler to know which captured variables need a follow-up
+ * classification call after the ask step completes.
  */
-export function extractClassification(text: string): { cleaned: string; classification?: string } {
-  const lines = text.trimEnd().split('\n');
-  const lastLine = lines[lines.length - 1]?.trim() || '';
-
-  if (lastLine.startsWith(FLOWSPEC_CLASS_PREFIX)) {
-    const classification = lastLine.slice(FLOWSPEC_CLASS_PREFIX.length).trim();
-    const cleaned = lines.slice(0, -1).join('\n').trimEnd();
-    return { cleaned, classification };
-  }
-
-  return { cleaned: text };
-}
-
-// ── Means Operator — First Pass (AST augmentation) ──────────────────────────
-
-/**
- * Walk the AST before execution, find all `means` conditions, and inject
- * classification instructions into the upstream `ask` prompts that produce
- * those variables. Mutates the AST in place.
- */
-export function augmentMeansPrompts(workflow: Workflow): void {
+export function buildMeansMap(workflow: Workflow): Map<string, string[]> {
   const meansMap = new Map<string, string[]>();
   collectMeansConditions(workflow.steps, meansMap);
-  if (meansMap.size === 0) return;
-  augmentAskSteps(workflow.steps, meansMap);
+  return meansMap;
 }
 
 function collectMeansConditions(steps: Step[], meansMap: Map<string, string[]>): void {
@@ -133,7 +115,9 @@ function collectMeansConditions(steps: Step[], meansMap: Map<string, string[]>):
   }
 }
 
-function addMeans(cond: Condition, meansMap: Map<string, string[]>): void {
+function addMeans(cond: ConditionExpr, meansMap: Map<string, string[]>): void {
+  if ('and' in cond) { cond.and.forEach(c => addMeans(c, meansMap)); return; }
+  if ('or' in cond) { cond.or.forEach(c => addMeans(c, meansMap)); return; }
   if (cond.op === 'means' && cond.value) {
     const existing = meansMap.get(cond.variable) || [];
     if (!existing.includes(cond.value)) existing.push(cond.value);
@@ -141,53 +125,3 @@ function addMeans(cond: Condition, meansMap: Map<string, string[]>): void {
   }
 }
 
-function augmentAskSteps(steps: Step[], meansMap: Map<string, string[]>): void {
-  for (const step of steps) {
-    if (step.type === 'ask' && step.capture && meansMap.has(step.capture)) {
-      const values = meansMap.get(step.capture)!;
-      step.prompt += buildClassificationSuffix(values);
-    }
-    // Recurse into sub-steps
-    switch (step.type) {
-      case 'if':
-        augmentAskSteps(step.body, meansMap);
-        step.otherwiseIfs?.forEach((b) => augmentAskSteps(b.body, meansMap));
-        if (step.otherwise) augmentAskSteps(step.otherwise, meansMap);
-        break;
-      case 'repeat_until':
-        augmentAskSteps(step.body, meansMap);
-        if (step.noConvergeHandler) augmentAskSteps(step.noConvergeHandler, meansMap);
-        break;
-      case 'parallel':
-      case 'race':
-        step.branches.forEach((b) => augmentAskSteps(b, meansMap));
-        break;
-      case 'for_each':
-        augmentAskSteps(step.body, meansMap);
-        break;
-      case 'ask':
-        if (step.failHandler) augmentAskSteps(step.failHandler, meansMap);
-        if (step.timeoutHandler) augmentAskSteps(step.timeoutHandler, meansMap);
-        break;
-      case 'approval':
-        if (step.rejectHandler) augmentAskSteps(step.rejectHandler, meansMap);
-        break;
-    }
-  }
-}
-
-/** Build the classification instruction appended to an `ask` prompt. */
-export function buildClassificationSuffix(values: string[]): string {
-  if (values.length === 1) {
-    return (
-      `\n\nIMPORTANT: On the very last line of your response, write exactly ` +
-      `"${FLOWSPEC_CLASS_PREFIX} ${values[0]}" if your response means "${values[0]}", ` +
-      `otherwise write "${FLOWSPEC_CLASS_PREFIX} other".`
-    );
-  }
-  const options = values.map((v) => `"${FLOWSPEC_CLASS_PREFIX} ${v}"`).join(', ');
-  return (
-    `\n\nIMPORTANT: On the very last line of your response, classify it by writing ` +
-    `exactly one of: ${options}, or "${FLOWSPEC_CLASS_PREFIX} other".`
-  );
-}
