@@ -30,9 +30,27 @@ FlowSpec is a minimal workflow DSL for orchestrating AI bots that compiles to Te
 |-------|--------|----------|
 | `run "Workflow" -> result` capture syntax | **Done** (2026-03-29) | High — spec's own example is broken without it |
 | Compound boolean conditions (`AND`/`OR`) | **Done** (2026-03-29) | High — day-one need for real workflows |
+| `(new session)` contamination | **Resolved by design** (2026-03-29) | Feature deprecated — context isolation is achieved via distinct bot names, not session resets. See §6c design note. |
 | Bot contention / static channel provisioning | Deferred | Architectural — needs dynamic bot pools |
 | `run` recursion depth limit | Deferred | Safety — needs cycle detection or max depth |
 | Security / trust model | Deferred | Production blocker but not V1 |
+
+### Pythia Self-Analysis (2026-03-29)
+
+Pythia was run against itself — question: *"What are the structural weaknesses of the Pythia workflow itself, and how could it be improved?"* Full results: [`pythia/results/pythia-self-analysis-2026-03-29.md`](../pythia/results/pythia-self-analysis-2026-03-29.md)
+
+Verification: 22 VERIFIED · 7 REFUTED (all minor: off-by-one line numbers, 1 wrong filename) · 2 UNVERIFIABLE. All 4 critical structural findings confirmed against source.
+
+**Priority fix list:**
+
+| Priority | Fix | Effort |
+|----------|-----|--------|
+| 1 | Wire `newSession` in compiler — clear Gemini history + reset sessionId | Low-Med |
+| 2 | Concurrency guard (mutex or channel-per-run) | Med |
+| 3 | Port Delphi's mode-specific prompts to Pythia's 5 phases (`{mode}` currently unused) | Med |
+| 4 | Implement `timeout`/`retries` in compiler (`within`/`retry` are currently cosmetic) | Med |
+| 5 | Track branch success/failure, surface status in judge prompts | Low |
+| 6 | Add explicit REFUTED-claim handling to `@output` prompt | Low |
 
 ### What each phase produces
 
