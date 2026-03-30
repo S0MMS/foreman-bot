@@ -1428,7 +1428,19 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
           const name = args[2].replace(/^@/, "");
           let channelId = args[3];
           const mentionMatch = channelId.match(/^<#([A-Z0-9]+)/i);
-          if (mentionMatch) channelId = mentionMatch[1];
+          if (mentionMatch) {
+            channelId = mentionMatch[1];
+          } else if (!/^[A-Z][A-Z0-9]{6,}$/i.test(channelId)) {
+            // Plain name like #some-channel or some-channel — look up the ID
+            const channelName = channelId.replace(/^#/, "");
+            const listRes = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 1000 }).catch(() => ({ channels: [] }));
+            const found = (listRes.channels || []).find((c: any) => c.name === channelName);
+            if (!found?.id) {
+              await respond(`:x: Could not find channel \`#${channelName}\`. Make sure the bot is invited to that channel first, then try again.`);
+              break;
+            }
+            channelId = found.id;
+          }
           registry[name] = channelId;
           saveBotRegistry(registry);
           await respond(`:white_check_mark: Registered bot \`@${name}\` → \`${channelId}\``);
