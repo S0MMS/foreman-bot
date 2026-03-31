@@ -26,6 +26,8 @@ import type {
   IfStep,
   ApprovalStep,
   RunStep,
+  ReadFileStep,
+  WriteFileStep,
 } from './ast.js';
 import {
   interpolate,
@@ -36,10 +38,22 @@ import {
 
 // ── Activity proxies ─────────────────────────────────────────────────────────
 
-const { dispatchToBot, postStatus } = proxyActivities<typeof activities>({
-  startToCloseTimeout: '15 minutes',
+const defaultActivities = proxyActivities<typeof activities>({
+  startToCloseTimeout: '30 minutes',
   heartbeatTimeout: '60 seconds',
 });
+
+const { dispatchToBot, postStatus, resetBotSession, readFlowFile, writeFlowFile } = defaultActivities;
+
+/** Create a dispatchToBot proxy with per-step timeout and retry options. */
+function dispatchWithOptions(timeout?: string, retries?: number) {
+  if (!timeout && !retries) return dispatchToBot;
+  return proxyActivities<typeof activities>({
+    startToCloseTimeout: (timeout || '15 minutes') as import('@temporalio/common').Duration,
+    heartbeatTimeout: '60 seconds',
+    retry: retries != null ? { maximumAttempts: retries + 1 } : undefined,
+  }).dispatchToBot;
+}
 
 // ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -52,6 +66,7 @@ interface FlowContext {
   botRegistry: Record<string, string>;
   allWorkflows: Workflow[];
   reportChannelId?: string;
+  resetBots: Set<string>;       // channels already reset in this workflow run
   meansMap: Map<string, string[]>;
 }
 
@@ -81,6 +96,7 @@ export async function flowspecWorkflow(
     allWorkflows: workflows,
     reportChannelId,
     meansMap: buildMeansMap(workflow),
+    resetBots: new Set(),
   };
 
   let approvalResult: { approved: boolean; reason: string } | null = null;
@@ -134,6 +150,10 @@ async function executeStep(ctx: FlowContext, step: Step): Promise<void> {
       return executeApproval(ctx, step);
     case 'run':
       return executeRun(ctx, step);
+    case 'read_file':
+      return executeReadFile(ctx, step);
+    case 'write_file':
+      return executeWriteFile(ctx, step);
     case 'stop':
       throw new FlowStop(step.message ? interpolate(ctx.vars, step.message) : undefined);
   }
@@ -141,14 +161,31 @@ async function executeStep(ctx: FlowContext, step: Step): Promise<void> {
 
 // ── ask ──────────────────────────────────────────────────────────────────────
 
+const DEEP_PREFIX = 'Think very deeply. Take your time.\n\n';
+const DEEP_TIMEOUT = '45 minutes';
+
 async function executeAsk(ctx: FlowContext, step: AskStep): Promise<void> {
   const channelId = resolveBot(ctx.botRegistry, step.bot);
-  const prompt = interpolate(ctx.vars, step.prompt);
+  const isDeep = ctx.vars.__deep === 'true';
+  const prompt = (isDeep ? DEEP_PREFIX : '') + interpolate(ctx.vars, step.prompt);
+  const dispatch = dispatchWithOptions(isDeep ? DEEP_TIMEOUT : step.timeout, step.retries);
+
+  // Reset bot session on first dispatch per workflow run
+  if (!ctx.resetBots.has(channelId)) {
+    await resetBotSession(channelId);
+    ctx.resetBots.add(channelId);
+  }
 
   let result: string;
   try {
-    result = await dispatchToBot(channelId, prompt);
+    result = await dispatch(channelId, prompt);
   } catch (err) {
+    // Temporal throws TimeoutFailure for startToCloseTimeout breaches
+    const isTimeout = err instanceof Error && err.constructor.name === 'TimeoutFailure';
+    if (isTimeout && step.timeoutHandler) {
+      await executeSteps(ctx, step.timeoutHandler);
+      return;
+    }
     if (step.failHandler) {
       await executeSteps(ctx, step.failHandler);
       return;
@@ -184,14 +221,33 @@ async function executeSend(ctx: FlowContext, step: SendStep): Promise<void> {
 // ── parallel ─────────────────────────────────────────────────────────────────
 
 async function executeParallel(ctx: FlowContext, step: ParallelStep): Promise<void> {
-  await Promise.allSettled(
-    step.branches.map((branch) => {
+  const results = await Promise.allSettled(
+    step.branches.map((branch, i) => {
       const branchCtx = cloneContext(ctx);
-      return executeSteps(branchCtx, branch).then(() => {
-        Object.assign(ctx.vars, branchCtx.vars);
-      });
+      return executeSteps(branchCtx, branch).then(() => branchCtx);
     }),
   );
+
+  let succeeded = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      Object.assign(ctx.vars, r.value.vars);
+      succeeded++;
+    } else {
+      failed++;
+      errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+    }
+  }
+
+  ctx.vars['__parallel_total'] = String(results.length);
+  ctx.vars['__parallel_succeeded'] = String(succeeded);
+  ctx.vars['__parallel_failed'] = String(failed);
+  if (errors.length > 0) {
+    ctx.vars['__parallel_errors'] = errors.join('; ');
+  }
 }
 
 // ── race ─────────────────────────────────────────────────────────────────────
@@ -210,7 +266,10 @@ async function executeRace(ctx: FlowContext, step: RaceStep): Promise<void> {
 
 async function executeForEach(ctx: FlowContext, step: ForEachStep): Promise<void> {
   const listStr = ctx.vars[step.listVar] || '';
-  const items = listStr.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean);
+  // If list contains newlines, split on newlines only (preserves commas within items).
+  // If no newlines, split on commas. This enables nested for-each loops.
+  const delimiter = listStr.includes('\n') ? /\n+/ : /,+/;
+  const items = listStr.split(delimiter).map((s) => s.trim()).filter(Boolean);
   const collected: string[] = [];
 
   if (step.concurrency && step.concurrency > 1) {
@@ -349,6 +408,22 @@ async function executeRun(ctx: FlowContext, step: RunStep): Promise<void> {
   }
 }
 
+// ── read file ─────────────────────────────────────────────────────────────────
+
+async function executeReadFile(ctx: FlowContext, step: ReadFileStep): Promise<void> {
+  const filePath = interpolate(ctx.vars, step.path);
+  const content = await readFlowFile(filePath);
+  ctx.vars[step.capture] = content;
+}
+
+// ── write file ────────────────────────────────────────────────────────────────
+
+async function executeWriteFile(ctx: FlowContext, step: WriteFileStep): Promise<void> {
+  const filePath = interpolate(ctx.vars, step.path);
+  const content = ctx.vars[step.variable] || '';
+  await writeFlowFile(filePath, content);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function cloneContext(ctx: FlowContext): FlowContext {
@@ -358,5 +433,6 @@ function cloneContext(ctx: FlowContext): FlowContext {
     allWorkflows: ctx.allWorkflows,
     reportChannelId: ctx.reportChannelId,
     meansMap: ctx.meansMap,
+    resetBots: ctx.resetBots,  // shared — don't re-reset in branches
   };
 }

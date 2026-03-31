@@ -1360,6 +1360,10 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             if (inp.defaultValue !== undefined) inputs[inp.name] = inp.defaultValue;
           }
           for (const arg of runArgs.slice(3)) {
+            if (arg === "--deep") {
+              inputs["__deep"] = "true";
+              continue;
+            }
             const eq = arg.indexOf("=");
             if (eq > 0) {
               inputs[arg.slice(0, eq)] = arg.slice(eq + 1);

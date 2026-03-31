@@ -1,5 +1,9 @@
 workflow "Pythia"
-  inputs: question (required), mode (default "code")
+  inputs: question, question_file, output_file, mode (default "code")
+
+  -- Load question from file if question_file was provided
+  if {question_file} is not empty
+    read {question_file} -> question
 
   -- PHASE 1: Independent exploration (diversity)
   -- Multi-model workers for true epistemic diversity
@@ -108,8 +112,9 @@ workflow "Pythia"
   """ -> revised
 
   -- PHASE 5: Independent fact-check (Chain of Verification)
-  -- Different model from the judge. Fresh context. No debate history.
-  ask @gemini-worker (new session) """
+  -- Dedicated verifier bot — separate channel, no shared history with @gemini-worker.
+  -- Context isolation via identity, not session resets. See flowspec.md §6c.
+  ask @gemini-verifier """
     Verify every factual claim in this text.
     You have NO context about how this was produced.
     For each claim, check it independently using tools.
@@ -125,8 +130,8 @@ workflow "Pythia"
     Then output a VERIFICATION SUMMARY with counts.
   """ -> verification
 
-  -- Final output: hand off to a conversational bot with full context
-  ask @output """
+  -- Final output: compile full detailed report, then summarize for channel
+  ask @collator """
     You are a research briefing assistant. A 5-phase multi-model analysis
     (Pythia) was just completed on this question: "{question}"
 
@@ -138,6 +143,29 @@ workflow "Pythia"
     {verification}
     ---
 
-    Present a clear, concise summary of the findings to the user.
-    Then be ready to answer follow-up questions — you have the full context.
-  """ -> briefing
+    Produce a COMPREHENSIVE DETAILED REPORT. Include:
+    - Executive summary
+    - All findings, recommendations, and analysis from the revised answer
+    - All corrections and false citations that were caught
+    - The full verification results (VERIFIED, UNVERIFIABLE, REFUTED counts and details)
+    - Confidence levels and caveats
+    - Any open questions or gaps
+
+    Do NOT summarize or condense. Preserve all detail from the revised answer.
+    If the verification found REFUTED claims, call them out explicitly.
+    If claims are UNVERIFIABLE, say so rather than presenting them as fact.
+    Format with clear markdown headers and structure.
+  """ -> detailed_report
+
+  -- Save full detail to disk if output path was provided
+  if {output_file} is not empty
+    write {detailed_report} to {output_file}
+
+  -- Short summary for the channel
+  ask @collator """
+    You just produced a detailed report on: "{question}"
+
+    Now give a SHORT executive summary — 3-5 paragraphs max.
+    Hit the key findings, biggest risks, and top recommendations only.
+    End with: "Full detailed report written to {output_file}"
+  """ -> summary

@@ -475,15 +475,21 @@ The language treats `ask` as stateless, but Claude sessions are stateful. Sequen
 
 **Default:** Persistent session per bot per workflow execution. A workflow starts a fresh session for each bot on first `ask`. Subsequent `ask` to the same bot continues that session.
 
-**Override:**
+**~~Override:~~** *(Deprecated — see design note below)*
 
 ```
 ask @clive (new session) "Review this with fresh eyes: {fix}"
 ```
 
+> **Design note (2026-03-29): `(new session)` is deprecated.**
+>
+> `(new session)` leaks an infrastructure concern into a PM-facing language. You would never tell a human "start a new session" — you'd ask a different person. FlowSpec's concept of a bot is **a named agent with its own context**. If a workflow step needs epistemic independence (e.g. a blind fact-check), it should reference a different bot, not reset the current one's memory. The bot registry already provides this: `@gemini-worker` vs `@gemini-verifier` gives you two independent contexts with no code changes.
+>
+> The parser still accepts `(new session)` for backward compatibility, but it is a no-op. Workflows should use distinct bot names for context isolation.
+
 #### 6d. Context Window Exhaustion
 
-After 20+ messages in a session, Claude's context fills up. The bridge should monitor token usage and automatically start a new session with a summary when approaching limits. Invisible to the PM.
+After 20+ messages in a session, Claude's context fills up. The bridge should monitor token usage and automatically start a new session with a summary when approaching limits. Invisible to the PM. This is an infrastructure-level concern handled by the bridge, not the DSL — the PM never needs to know about it.
 
 ### High — Should Solve for V1
 

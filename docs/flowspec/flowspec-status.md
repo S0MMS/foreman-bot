@@ -39,7 +39,7 @@ FlowSpec is a minimal workflow DSL for orchestrating AI bots that compiles to Te
 
 Pythia was run against itself — question: *"What are the structural weaknesses of the Pythia workflow itself, and how could it be improved?"* Full results: [`pythia/results/pythia-self-analysis-2026-03-29.md`](../pythia/results/pythia-self-analysis-2026-03-29.md)
 
-Verification: 22 VERIFIED · 7 REFUTED (all minor: off-by-one line numbers, 1 wrong filename) · 2 UNVERIFIABLE. All 4 critical structural findings confirmed against source.
+Verification: 22 VERIFIED · 7 REFUTED (all minor: off-by-one line numbers, 1 wrong filename) · 2 UNVERIFIABLE.
 
 **Priority fix list:**
 

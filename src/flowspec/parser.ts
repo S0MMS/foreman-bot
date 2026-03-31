@@ -9,7 +9,7 @@
 import type {
   FlowFile, Workflow, WorkflowInput, Step, Condition, ConditionExpr, ConditionOp,
   AskStep, SendStep, ParallelStep, RaceStep, ForEachStep,
-  RepeatUntilStep, IfStep, ApprovalStep, RunStep, StopStep,
+  RepeatUntilStep, IfStep, ApprovalStep, RunStep, ReadFileStep, WriteFileStep, StopStep,
 } from './ast.js';
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -238,6 +238,8 @@ class Parser {
 
     if (text.startsWith('ask ')) return this.parseAsk();
     if (text.startsWith('send ')) return this.parseSend();
+    if (text.startsWith('read ')) return this.parseReadFile();
+    if (text.startsWith('write ')) return this.parseWriteFile();
     if (text.startsWith('at the same time')) return this.parseParallel();
     if (text === 'race' || text.startsWith('race')) return this.parseRace();
     if (text.startsWith('for each ')) return this.parseForEach();
@@ -646,6 +648,56 @@ class Parser {
     }
 
     return step;
+  }
+
+  private parseReadFile(): ReadFileStep {
+    const line = this.advance();
+    const text = line.text;
+
+    // read "path/to/file" -> variable  OR  read {path_var} -> variable
+    const rest = text.slice('read '.length).trim();
+    let path: string;
+    let afterPath: string;
+
+    if (rest.startsWith('"')) {
+      [path, afterPath] = this.extractQuoted(rest, line.num);
+    } else if (rest.startsWith('{')) {
+      const varMatch = rest.match(/^\{(\w+)\}\s*(.*)/);
+      if (!varMatch) throw new ParseError(line.num, 'Expected variable reference like {name}');
+      path = `{${varMatch[1]}}`;
+      afterPath = varMatch[2];
+    } else {
+      throw new ParseError(line.num, 'Expected: read "path" -> variable  or  read {variable} -> variable');
+    }
+
+    const captureMatch = afterPath.match(/->\s*(\w+)/);
+    if (!captureMatch) throw new ParseError(line.num, 'Expected: read "path" -> variable');
+
+    return { type: 'read_file', path, capture: captureMatch[1], line: line.num };
+  }
+
+  private parseWriteFile(): WriteFileStep {
+    const line = this.advance();
+    const text = line.text;
+
+    // write {variable} to "path/to/file" OR write {variable} to {path_var}
+    const match = text.match(/^write\s+\{(\w+)\}\s+to\s+/);
+    if (!match) throw new ParseError(line.num, 'Expected: write {variable} to "path"');
+
+    const rest = text.slice(match[0].length).trim();
+    let path: string;
+    if (rest.startsWith('"')) {
+      [path] = this.extractQuoted(rest, line.num);
+    } else if (rest.startsWith('{')) {
+      // Variable reference as path: {output_file}
+      const varMatch = rest.match(/^\{(\w+)\}/);
+      if (!varMatch) throw new ParseError(line.num, 'Expected variable reference like {name}');
+      path = `{${varMatch[1]}}`;
+    } else {
+      throw new ParseError(line.num, 'Expected quoted path or {variable} after "to"');
+    }
+
+    return { type: 'write_file', variable: match[1], path, line: line.num };
   }
 
   private parseStop(): StopStep {

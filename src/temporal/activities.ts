@@ -6,6 +6,7 @@
 
 import { Context } from '@temporalio/activity';
 import { getSlackApp, getProcessChannelMessage } from './slack-context.js';
+import { clearSession } from '../session.js';
 
 const POLL_MS = 5_000;
 
@@ -53,20 +54,59 @@ export async function postCompletion(channelId: string, startEpochMs: number): P
   });
 }
 
+// ── Bot Session Reset ────────────────────────────────────────────────────────
+
+/** Clear a bot channel's session so the next dispatch starts fresh. */
+export async function resetBotSession(channelId: string): Promise<void> {
+  clearSession(channelId);
+}
+
+// ── File I/O ─────────────────────────────────────────────────────────────────
+
+/** Read a file from disk. Path must be absolute. */
+export async function readFlowFile(filePath: string): Promise<string> {
+  const { readFileSync } = await import('fs');
+  const { isAbsolute } = await import('path');
+  if (!isAbsolute(filePath)) throw new Error(`readFlowFile requires an absolute path, got: ${filePath}`);
+  return readFileSync(filePath, 'utf-8');
+}
+
+/** Write content to a file on disk. Path must be absolute. */
+export async function writeFlowFile(filePath: string, content: string): Promise<void> {
+  const { writeFileSync, mkdirSync } = await import('fs');
+  const { isAbsolute, dirname } = await import('path');
+  if (!isAbsolute(filePath)) throw new Error(`writeFlowFile requires an absolute path, got: ${filePath}`);
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, content, 'utf-8');
+}
+
 // ── FlowSpec ─────────────────────────────────────────────────────────────────
+
+/** Per-channel mutex: prevents interleaved dispatches to the same bot. */
+const channelLocks = new Map<string, Promise<void>>();
+
+function acquireChannelLock(channelId: string): { release: () => void; ready: Promise<void> } {
+  const prev = channelLocks.get(channelId) || Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((r) => { release = r; });
+  channelLocks.set(channelId, next);
+  return { release, ready: prev };
+}
 
 /**
  * FlowSpec core activity — dispatch a prompt to a bot channel, await the
  * full Claude session response, and return the response text.
  *
- * This is the synchronous counterpart of runClaudeInChannel: instead of
- * fire-and-forget + polling, it awaits processChannelMessage directly.
- * Each workflow gets its own dedicated bot, so no mutex is needed.
+ * Acquires a per-channel lock so concurrent workflows can't interleave
+ * messages to the same bot. Queued dispatches wait until the channel is free.
  */
 export async function dispatchToBot(
   channelId: string,
   prompt: string,
 ): Promise<string> {
+  const lock = acquireChannelLock(channelId);
+  await lock.ready; // wait for any prior dispatch to this channel to finish
+
   const app = getSlackApp();
   const processChannelMessage = getProcessChannelMessage();
 
@@ -93,6 +133,7 @@ export async function dispatchToBot(
     return result.result;
   } finally {
     clearInterval(heartbeat);
+    lock.release();
   }
 }
 

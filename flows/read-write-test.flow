@@ -1,0 +1,14 @@
+workflow "Read Write Test"
+  inputs: input_file (required), output_file (required)
+
+  -- Read the input file (absolute path required)
+  read {input_file} -> content
+
+  -- Ask a bot to summarize it
+  ask @claude-worker "Summarize this in exactly 2 sentences: {content}" -> summary
+
+  -- Write the summary to disk (absolute path required)
+  write {summary} to {output_file}
+
+  -- Notify
+  send #claude-01 "Read/write test complete. Summary written to {output_file}"

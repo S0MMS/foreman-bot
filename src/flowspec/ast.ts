@@ -116,6 +116,20 @@ export interface RunStep {
   line: number;
 }
 
+export interface ReadFileStep {
+  type: 'read_file';
+  path: string;                 // file path (may contain {variables})
+  capture: string;              // -> variable name
+  line: number;
+}
+
+export interface WriteFileStep {
+  type: 'write_file';
+  variable: string;             // {variable} to write
+  path: string;                 // file path (may contain {variables})
+  line: number;
+}
+
 export interface StopStep {
   type: 'stop';
   message?: string;
@@ -132,6 +146,8 @@ export type Step =
   | IfStep
   | ApprovalStep
   | RunStep
+  | ReadFileStep
+  | WriteFileStep
   | StopStep;
 
 // ── Workflow (top-level) ─────────────────────────────────────────────────────

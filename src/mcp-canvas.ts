@@ -293,7 +293,7 @@ export function createCanvasMcpServer(channelId: string, app: App) {
           try {
             // Encode the Mermaid syntax for the mermaid.ink API
             const encoded = Buffer.from(mermaidSyntax).toString("base64url");
-            const url = `https://mermaid.ink/img/${encoded}?type=png&bgColor=white`;
+            const url = `https://mermaid.ink/img/${encoded}?type=png&bgColor=!white`;
 
             const res = await fetch(url);
             if (!res.ok) {

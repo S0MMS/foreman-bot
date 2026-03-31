@@ -68,14 +68,14 @@ Three critics review the judge's synthesis in parallel, each with a **different 
 **Why not another full debate round?** The literature shows diminishing returns beyond 2-3 rounds, with increasing risk of problem drift.
 
 ### Phase 5 — Independent Fact-Check (Chain of Verification)
-`@gemini-worker` in a **fresh session** (no debate history, clean context window) verifies every factual claim in the revised answer. Output is **append-only** — the fact-checker annotates but does not revise the answer.
+`@gemini-verifier` — a **dedicated bot on its own channel**, separate from `@gemini-worker` — verifies every factual claim in the revised answer. Output is **append-only** — the fact-checker annotates but does not revise the answer.
 
 For each claim:
 - `VERIFIED: [claim] — [evidence]`
 - `UNVERIFIABLE: [claim] — [what you looked for]`
 - `REFUTED: [claim] — [what's actually true]`
 
-**Why a fresh session?** A fact-checker with zero debate history can't be influenced by the reasoning that produced the answer. Dhuliawala et al. showed 50-77% hallucination reduction from this factored verification pattern.
+**Why a separate bot?** Context isolation comes from identity, not session resets. `@gemini-verifier` has its own channel with no shared history from Phases 1 or 3 — the fact-checker genuinely has zero debate context. The earlier `(new session)` approach was deprecated because it leaked infrastructure concerns into the DSL (see flowspec.md §6c).
 
 **Why append-only?** Prevents one more round of potential corruption. The fact-checker's job is to flag, not to fix.
 
@@ -87,7 +87,8 @@ For each claim:
 |---|---|---|---|
 | `@claude-worker` | Claude | `#claude-worker` | 1 (explore), 3 (accuracy critic) |
 | `@claude-judge` | Claude | `#claude-judge` | 2 (synthesize), 4 (revise) |
-| `@gemini-worker` | Gemini | `#gemini-worker` | 1 (explore), 3 (completeness critic), 5 (fact-checker) |
+| `@gemini-worker` | Gemini | `#gemini-worker` | 1 (explore), 3 (completeness critic) |
+| `@gemini-verifier` | Gemini | `#gemini-verifier` | 5 (independent fact-checker) |
 | `@gpt-worker` | GPT | `#gpt-worker` | 1 (explore), 3 (devil's advocate) |
 
 Output is sent to `#output` (currently `#pythia-results`).

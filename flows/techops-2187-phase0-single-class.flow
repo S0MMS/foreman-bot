@@ -1,0 +1,119 @@
+-- TECHOPS-2187 Phase 0: Single-Class Test Generation
+-- Generates, judges, builds, and validates a unit test for one ObjC class
+
+workflow "Single Class Test Gen"
+  inputs: repo_path (required), target_class (required), output_file
+
+  -- Step 1: Three bots generate tests independently
+  at the same time
+    ask @claude-worker """
+      In {repo_path}, generate a Swift test file for the ObjC class "{target_class}".
+      Read its .h and .m files first.
+      RULES:
+      - @testable import mfpDebug
+      - Subclass BaseTestCase (or BaseTestCaseWithSetCurrentUser if needs user context)
+      - Call super.setUp() and super.tearDown()
+      - Reuse mocks from mfpUnitTests/Mocks/ — check there FIRST
+      - Use ServiceLocator.mock()/.unmock() for DI
+      - Guard ObjC returns with optional binding — no force-unwraps
+      - 3-5 test methods covering distinct behaviors
+      - Place in mfpUnitTests/ matching existing subdirectory structure
+      Return: file path and file content.
+    """ -> gen_claude
+
+    ask @gemini-worker """
+      In {repo_path}, generate a Swift test file for the ObjC class "{target_class}".
+      Read its .h and .m files first.
+      RULES:
+      - @testable import mfpDebug
+      - Subclass BaseTestCase (or BaseTestCaseWithSetCurrentUser if needs user context)
+      - Call super.setUp() and super.tearDown()
+      - Reuse mocks from mfpUnitTests/Mocks/ — check there FIRST
+      - Use ServiceLocator.mock()/.unmock() for DI
+      - Guard ObjC returns with optional binding — no force-unwraps
+      - 3-5 test methods covering distinct behaviors
+      - Place in mfpUnitTests/ matching existing subdirectory structure
+      Return: file path and file content.
+    """ -> gen_gemini
+
+    ask @gpt-worker """
+      In {repo_path}, generate a Swift test file for the ObjC class "{target_class}".
+      Read its .h and .m files first.
+      RULES:
+      - @testable import mfpDebug
+      - Subclass BaseTestCase (or BaseTestCaseWithSetCurrentUser if needs user context)
+      - Call super.setUp() and super.tearDown()
+      - Reuse mocks from mfpUnitTests/Mocks/ — check there FIRST
+      - Use ServiceLocator.mock()/.unmock() for DI
+      - Guard ObjC returns with optional binding — no force-unwraps
+      - 3-5 test methods covering distinct behaviors
+      - Place in mfpUnitTests/ matching existing subdirectory structure
+      Return: file path and file content.
+    """ -> gen_gpt
+
+  -- Step 2: Judge picks the best
+  ask @claude-judge """
+    Three test files generated for "{target_class}":
+    Claude: {gen_claude}
+    Gemini: {gen_gemini}
+    GPT: {gen_gpt}
+
+    Score each 1-10 on:
+    1. Behavioral coverage (tests behavior, not implementation)
+    2. Correctness (will compile against ObjC via bridging header)
+    3. Resilience (not brittle or coupled to internals)
+    4. Mock reuse (uses existing project mocks)
+    5. Readability (clear names, matches conventions)
+
+    Pick the best (or merge if complementary). Return final test file content and path.
+  """ -> best_test
+
+  -- Step 3: Write, lint, and build
+  ask @claude-worker """
+    In {repo_path}:
+    1. Write this test file to disk: {best_test}
+    2. Run swiftformat on the new file
+    3. Run swiftlint lint --fix on the new file, then fix any remaining warnings
+    4. Add it to the mfpUnitTests target in the .xcodeproj
+    5. Run: xcodebuild test -workspace MyFitnessPal.xcworkspace -scheme MyFitnessPal
+       -testPlan MyFitnessPal -destination 'platform=iOS Simulator,name=iPhone 16'
+       -only-testing:mfpUnitTests/<TestClassName>
+    6. If it fails, read errors and fix
+    Report: pass/fail, errors, fixes applied.
+  """ -> build_result
+
+  -- Step 3b: Fix loop if build failed (up to 3 more attempts)
+  if {build_result} means "failing"
+    repeat until {build_result} means "all tests pass", at most 3 times
+      ask @claude-worker """
+        In {repo_path}: previous build errors: {build_result}
+        Fix the test file, then re-run swiftformat and swiftlint lint --fix before rebuilding.
+        Same xcodebuild command.
+        Report: pass/fail, remaining errors.
+      """ -> build_result
+
+  if {build_result} means "still failing"
+    send #techops-2187 "Test generation FAILED for {target_class} after retries. Errors: {build_result}"
+    stop "Failed. Review errors before retrying."
+
+  -- Step 4: Flaky check — run 3x
+  ask @claude-worker """
+    In {repo_path}: run the xcodebuild test command 3 times for the new test class.
+    Report: pass/fail per run. Flag any inconsistency.
+  """ -> flaky_check
+
+  if {flaky_check} contains "flaky"
+    send #techops-2187 "Tests for {target_class} are FLAKY: {flaky_check}"
+    stop "Tests are flaky. Fix before proceeding."
+
+  -- Step 5: Report
+  send #techops-2187 """
+    Test generation PASSED for {target_class}.
+    Judge scores: {best_test}
+    Build attempts: {build_result}
+    Flaky check: {flaky_check}
+  """
+
+  -- Save results if output path provided
+  if {output_file} is not empty
+    write {build_result} to {output_file}

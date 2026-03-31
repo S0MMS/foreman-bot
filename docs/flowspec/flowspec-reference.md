@@ -6,6 +6,16 @@
 
 ---
 
+## FlowSpec Was Designed from the Ground Up by AI, for AI
+
+**FlowSpec was not designed by a human. It was designed from the ground up by AI, for AI.**
+
+The dev posed a question to Delphi: *"What should an AI bot orchestration language look like?"* Six AI agents across Claude, Gemini, and GPT each independently proposed a design. A judge synthesized their answers. Workers critiqued the synthesis. The judge revised. After 3 rounds of adversarial debate, the output of that process became the FlowSpec specification.
+
+No human sat down with a blank spec document. The 12 primitives, the Turing completeness principle, the `ask` vs `send` distinction, the `means` operator, the `pause for approval` gate — all of it is what multiple leading AI models concluded, through the same Delphi process that FlowSpec is built to run, was the right design for a language that AI agents would use to orchestrate each other.
+
+---
+
 ## Overview
 
 FlowSpec is a workflow description language for orchestrating AI bots. It was designed with Turing completeness as its first and primary principle — everything else is secondary.
@@ -18,16 +28,27 @@ FlowSpec is a workflow description language for orchestrating AI bots. It was de
 
 **How it runs:** FlowSpec compiles to Temporal TypeScript. The `/cc run` Slack command starts a workflow execution. Each `ask` step dispatches work to a named bot (Slack channel), waits for the response, and captures it into a named variable.
 
-**Porting targets:** Because FlowSpec is Turing complete, it can be mechanically compiled to any other Turing-complete workflow system. Current and planned targets:
-- **Temporal** (running in production locally)
-- **AWS AgentCore** (port in progress — MFP has an existing AWS account and a decision to use AgentCore for agent hosting)
+### Why Turing Completeness Matters
+
+Most workflow languages are deliberately *not* Turing complete — they restrict loops or recursion to guarantee termination. FlowSpec made the opposite choice intentionally.
+
+Turing completeness means two things practically:
+
+1. **You can express anything.** Any workflow pattern — no matter how complex — can be written in FlowSpec. There is no ceiling.
+2. **It can be ported anywhere.** By the Church-Turing thesis, any Turing-complete system can be mechanically translated to any other Turing-complete system. FlowSpec workflows are not locked to any runtime. They can be compiled to Temporal, AWS Step Functions + AgentCore, LangGraph, Apache Airflow, or any future platform. The language outlives its runtime.
+
+This is what makes FlowSpec unusual. Most DSLs are designed around a specific runtime and die with it. FlowSpec was designed to be runtime-agnostic from day one — the language *is* the workflow, independent of where it executes.
+
+**Current and planned porting targets:**
+- **Temporal** (running in production locally — the reference implementation)
+- **AWS AgentCore** (port in progress — MFP has an existing AWS account and a formal decision to use AgentCore for agent hosting)
 - Theoretically also: AWS Step Functions, LangGraph, Apache Airflow, Prefect, Temporal Cloud
 
 ---
 
 ## Language Primitives
 
-12 primitives total.
+14 primitives total.
 
 | Primitive | Purpose |
 |-----------|---------|
@@ -42,6 +63,8 @@ FlowSpec is a workflow description language for orchestrating AI bots. It was de
 | `otherwise` / `otherwise if` | Else / else-if |
 | `run "Workflow" [with k=v] [-> name]` | Sub-workflow call — the key to Turing completeness |
 | `pause for approval [with message "..."]` | Human gate — workflow pauses until user approves |
+| `read "path" -> name` / `read {var} -> name` | Read a file from disk into a variable |
+| `write {var} to "path"` / `write {var} to {path_var}` | Write a variable's content to a file on disk |
 | `within <duration>` | Timeout on an `ask` step |
 | `retry N times` / `if it fails` | Error handling |
 | `stop ["message"]` | Exit workflow |
@@ -97,6 +120,65 @@ otherwise if {review} means "needs changes"
 otherwise if {review} means "rejected"
   stop "PR rejected: {review}"
 ```
+
+### File I/O: `read` and `write`
+
+`read` loads a file from disk into a variable. `write` saves a variable to a file. **Paths must be absolute** — no relative paths allowed. This avoids ambiguity about "relative to what?" for PMs writing workflows.
+
+```
+-- Read a prompt from a file
+read "/Users/chris/pythia/prompts/my-question.md" -> question
+
+-- Read from a path stored in a variable
+read {question_file} -> question
+
+-- Write results to a file
+write {briefing} to "/Users/chris/pythia/results/output.md"
+
+-- Write to a path stored in a variable
+write {detailed_report} to {output_file}
+```
+
+Both `read` and `write` support variable interpolation in quoted paths:
+
+```
+write {result} to "/Users/chris/results/{target_class}-result.md"
+```
+
+### `for each` — Delimiter Behavior
+
+`for each` splits lists automatically. The delimiter depends on the list content:
+
+- **List contains newlines** → splits on newlines only (commas within each item are preserved)
+- **List has no newlines** → splits on commas
+
+This enables nested `for each` loops for batching:
+
+```
+-- Outer loop: batch_list has newlines between batches
+-- Each batch line is: "ClassA, ClassB, ClassC"
+for each batch in {batch_list}
+  -- Inner loop: no newlines in batch, splits on commas
+  for each class in {batch}
+    run "Process Class" with target_class={class}
+```
+
+### `--deep` Mode
+
+Adding `--deep` to a `/cc run` command modifies every `ask` step in the workflow:
+
+- **Prepends** "Think very deeply. Take your time." to every prompt
+- **Increases timeout** from 30 minutes to 45 minutes per `ask` step
+
+```
+/cc run /path/to/workflow.flow "Name" --deep question="What is X?"
+```
+
+Works on any FlowSpec workflow, not just Pythia.
+
+### Bot Session Reset
+
+On the first `ask` dispatch to each bot in a workflow run, the bot's session is automatically cleared. This ensures every workflow starts with clean context — no leftover conversation from a previous run bleeding in. No action needed from the workflow author; this is handled by the runtime.
 
 ---
 
@@ -335,6 +417,8 @@ FlowSpec compiles to Temporal TypeScript. Each primitive maps 1:1:
 | `retry N times` | `RetryPolicy { maximumAttempts: N + 1 }` |
 | `run "Workflow"` | `await executeChild(workflowFn, { args })` |
 | `send` | Fire-and-forget `executeActivity(postStatus)` |
+| `read "path" -> var` | `await executeActivity(readFlowFile, { path })` |
+| `write {var} to "path"` | `await executeActivity(writeFlowFile, { path, content })` |
 | `stop` | `throw FlowStop` |
 
 ### Bot Registry
@@ -354,10 +438,24 @@ Register a new bot: `/cc bots add <name> #channel-name`
 
 ### Workflow Sources
 
-- **File:** `/cc run path/to/workflow.flow "Workflow Name"`
+- **File:** `/cc run /absolute/path/to/workflow.flow "Workflow Name"`
 - **Named canvas:** `/cc run "Canvas Title" "Workflow Name"`
 - **Default canvas:** `/cc run canvas "Workflow Name"`
 - **List canvases:** `/cc canvas list`
+
+### Runtime Flags
+
+- **`--deep`** — Prepends "Think very deeply. Take your time." to every `ask` prompt. Increases per-step timeout from 30 to 45 minutes.
+
+```
+/cc run /path/to/flow.flow "Name" --deep key="value"
+```
+
+### Default Timeouts
+
+- **Normal mode:** 30 minutes per `ask` step
+- **`--deep` mode:** 45 minutes per `ask` step
+- **Override per step:** `ask @bot "..." within 1 hour`
 
 ### Validation
 
@@ -386,4 +484,20 @@ The compilation mapping for AgentCore targets:
 | `for each` | Step Functions `Map` state |
 | `if/otherwise` | Step Functions `Choice` state |
 | `run "Workflow"` | Step Functions sub-state-machine |
+| `read "path" -> var` | Lambda function (S3 or EFS read) |
+| `write {var} to "path"` | Lambda function (S3 or EFS write) |
 | `pause for approval` | Step Functions `Wait` state + callback token |
+
+---
+
+## See Also
+
+`docs/flowspec.md` is the full engineering spec — it covers topics not in this reference doc:
+
+- **The 80% Patterns** — how real-world workflows break down into primitives
+- **Hard Problems (the 20%)** — `dispatchToBot` TypeScript pseudocode, bot pool design, security/trust model gaps
+- **Compilation Boundary** — exactly what the compiler does vs. what the runtime handles
+- **Runtime Infrastructure** — activity retry logic, signal handling, `continueAsNew` mechanics
+- **Build Order** — recommended implementation sequence for the compiler
+
+If you're implementing the FlowSpec compiler or extending the runtime, start there.

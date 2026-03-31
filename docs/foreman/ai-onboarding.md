@@ -20,7 +20,9 @@ Foreman is the runtime and control plane. FlowSpec is the language for orchestra
 
 ## What Is FlowSpec?
 
-FlowSpec is a workflow description language purpose-built for AI bot orchestration. It was designed by Chris Shreve and developed through a multi-round Delphi research process involving 6 AI agents.
+**FlowSpec was designed from the ground up by AI, for AI.** No human wrote a spec. The dev posed a question to Delphi — *"What should an AI bot orchestration language look like?"* — and 6 AI agents across Claude, Gemini, and GPT designed it through 3 rounds of adversarial debate. The output of that process *is* the language. Every primitive, every design principle, the Turing completeness goal, the `ask` vs `send` distinction — all of it came from AI consensus, not a human designer.
+
+FlowSpec is a workflow description language for orchestrating AI bots.
 
 **Design principles (in order of priority):**
 
@@ -58,7 +60,9 @@ For the complete language spec, examples, and implementation details, see: `docs
 
 ## What Is Pythia?
 
-Pythia is a 5-phase multi-model verification workflow. It is the successor to Delphi (a 3-phase workflow) and was itself designed through a Delphi process.
+**Pythia was designed from the ground up by AI, for AI.** The dev asked Delphi to run Delphi on itself — the question was *"How should Delphi be improved?"* Three models independently analyzed Delphi's architecture, a judge synthesized their answers, workers critiqued it, the judge revised. The output of that process *became* Pythia's design spec. No human wrote it. Pythia's 5-phase architecture is what multiple leading AI models concluded, through the very process Pythia now implements, was the best multi-model verification pipeline.
+
+Pythia is a 5-phase multi-model verification workflow — the successor to Delphi.
 
 **The problem Pythia solves:** A single LLM can be confidently wrong. Pythia gets multiple independent models to answer the same question, then runs structured critique and fact-checking phases to surface errors, contradictions, and missing perspectives before producing a final answer.
 

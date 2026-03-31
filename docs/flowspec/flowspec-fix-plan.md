@@ -105,9 +105,9 @@
 | 2b. Parser `-> varName` | **Done** |
 | 2c. Compiler capture logic | **Done** |
 | 2d. Build + test | **Done** — 6/6 pass |
-| 5a. AST compound conditions | Not started |
-| 5b. Parser `and`/`or` | Not started |
-| 5c. Runtime eval | Not started |
-| 5d. Compiler swap | Not started |
-| 5e. Means map recursion | Not started |
-| 5f. Build + test | Not started |
+| 5a. AST compound conditions | **Done** |
+| 5b. Parser `and`/`or` | **Done** |
+| 5c. Runtime eval | **Done** |
+| 5d. Compiler swap | **Done** (not needed — `evaluateCondition` updated in place to handle `ConditionExpr`) |
+| 5e. Means map recursion | **Done** |
+| 5f. Build + test | **Done** — 8/8 pass |
