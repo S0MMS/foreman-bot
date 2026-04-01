@@ -1,0 +1,94 @@
+# bots.yaml — Bot Registry
+# Single source of truth for all bot identities in the Foreman ecosystem.
+# All bots get a Kafka topic pair: {name}.inbox / {name}.outbox
+#
+# Required fields for all bots:
+#   type        — sdk | webhook | agentcore | human | mock
+#   system_prompt — the bot's personality and instructions
+#
+# Fields by type:
+#   sdk:        provider (anthropic|openai|gemini), model
+#   webhook:    url, headers (optional)
+#   agentcore:  agent_id, alias_id
+#   human:      slack_user, timeout_seconds
+#   mock:       response
+
+bots:
+
+  # ── SDK Bots (local Anthropic/OpenAI/Gemini) ────────────────────────────────
+
+  betty:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are Betty, a senior software engineer. You write clean, well-reasoned
+      code and explain your thinking clearly. You are precise and thorough.
+
+  clive:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are Clive, a code reviewer and architect. You identify edge cases,
+      suggest improvements, and think about maintainability and scale.
+
+  gemini-worker:
+    type: sdk
+    provider: gemini
+    model: gemini-2.5-flash
+    system_prompt: |
+      You are a research assistant. You answer questions thoroughly, cite your
+      reasoning, and flag uncertainty clearly.
+
+  gpt-worker:
+    type: sdk
+    provider: openai
+    model: gpt-4o
+    system_prompt: |
+      You are a research assistant. You answer questions thoroughly, cite your
+      reasoning, and flag uncertainty clearly.
+
+  claude-judge:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a synthesis judge. You receive multiple perspectives on a question,
+      identify points of agreement and disagreement, verify claims, and produce
+      a single well-structured authoritative answer.
+
+  # ── Webhook Bots (any HTTP endpoint) ────────────────────────────────────────
+  # Uncomment and configure when needed.
+  #
+  # external-agent:
+  #   type: webhook
+  #   url: https://my-agent.company.com/invoke
+  #   headers:
+  #     Authorization: "Bearer ${EXTERNAL_AGENT_TOKEN}"
+  #   system_prompt: "Handles external data queries."
+
+  # ── AgentCore Bots (AWS Bedrock) ─────────────────────────────────────────────
+  # Reserved — not yet implemented. Will not break anything if defined here.
+  #
+  # pipeline-agent:
+  #   type: agentcore
+  #   agent_id: arn:aws:bedrock:us-east-1:123456789:agent/XXXXX
+  #   alias_id: TSTALIASID
+  #   system_prompt: "Handles data pipeline queries via AWS AgentCore."
+
+  # ── Human Bots (Slack DM gate) ───────────────────────────────────────────────
+  # Routes the prompt to a human via Slack DM and waits for their reply.
+  #
+  # human-reviewer:
+  #   type: human
+  #   slack_user: U0ABC123
+  #   timeout_seconds: 3600
+  #   system_prompt: "Human approval gate."
+
+  # ── Mock Bots (testing) ──────────────────────────────────────────────────────
+
+  test-double:
+    type: mock
+    response: "Mock response — this bot is a test double."
+    system_prompt: "Returns a canned response. Use for testing workflows."

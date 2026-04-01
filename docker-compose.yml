@@ -1,0 +1,65 @@
+# Foreman 2.0 Infrastructure
+# Starts Redpanda only — Temporal runs natively via Homebrew (temporal server start-dev)
+#
+# Usage:
+#   docker compose up -d        # start Redpanda in background
+#   docker compose down         # stop and remove containers
+#   docker compose logs -f      # tail logs
+#
+# Services:
+#   Redpanda broker   → localhost:19092  (Kafka wire protocol — Foreman connects here)
+#   Redpanda Console  → localhost:8080   (web UI — watch bot messages here)
+#
+# Everything else runs natively:
+#   Temporal server   → temporal server start-dev   (localhost:7233)
+#   Foreman           → npm run dev
+
+services:
+
+  # ── Redpanda ────────────────────────────────────────────────────────────────
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: foreman-redpanda
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 512M
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - "19092:19092"   # Kafka — Foreman connects here from host
+      - "18081:18081"   # Schema registry
+      - "18082:18082"   # HTTP proxy
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Redpanda Console ────────────────────────────────────────────────────────
+  redpanda-console:
+    image: redpandadata/console:latest
+    container_name: foreman-redpanda-console
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command: >
+      -c 'printf "kafka:\n  brokers: [\"redpanda:9092\"]\n" > /tmp/config.yml && /app/console'
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+    ports:
+      - "8080:8080"     # Console UI → localhost:8080
+
+volumes:
+  redpanda-data:
