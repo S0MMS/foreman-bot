@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { homedir } from "os";
 import type { App } from "@slack/bolt";
-import { fetchChannelCanvas, fetchCanvasByFileId, listChannelCanvases, createChannelCanvas, appendCanvasContent, replaceCanvasContent, updateCanvasSection, deleteCanvas, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
+import { fetchChannelCanvas, fetchCanvasByFileId, listChannelCanvases, createChannelCanvas, appendCanvasContent, replaceCanvasContent, updateCanvasSection, deleteCanvas, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner, findCanvasSections } from "./canvas.js";
 import { getState, setCanvasFileId } from "./session.js";
 import { createJiraIssue, readJiraIssue, updateJiraIssue, deleteJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, transitionJiraIssue, assignJiraIssue, getJiraTransitions, getJiraIssueEditMeta, setJiraField, getJiraProjectKey, getJiraHost } from "./jira.js";
 import { readConfluencePage, searchConfluencePages, createConfluencePage, updateConfluencePage } from "./confluence.js";
@@ -90,6 +90,28 @@ export function createCanvasMcpServer(channelId: string, app: App) {
             return {
               content: [{ type: "text" as const, text: `Error reading canvas: ${err instanceof Error ? err.message : String(err)}` }],
             };
+          }
+        }
+      ),
+      tool(
+        "CanvasFindSection",
+        "Search for sections in a canvas that contain specific text. Returns section IDs and their text content. " +
+        "Use this to find the ID of a section you want to update or delete — then pass that ID to CanvasUpdateElementById or CanvasDeleteElementById. " +
+        "Searches headings (h1/h2/h3), paragraphs, code blocks, quotes, and lists.",
+        {
+          canvas_id: z.string().describe("The canvas ID (from CanvasList)."),
+          text: z.string().describe("Text to search for within the canvas sections."),
+        },
+        async ({ canvas_id, text }) => {
+          try {
+            const results = await findCanvasSections(app, canvas_id, text);
+            if (results.length === 0) {
+              return { content: [{ type: "text" as const, text: `No sections found containing "${text}".` }] };
+            }
+            const list = results.map(r => `type: ${r.type}\nid: ${r.id}\ntext: ${r.text}`).join("\n\n");
+            return { content: [{ type: "text" as const, text: `Found ${results.length} section(s):\n\n${list}` }] };
+          } catch (err) {
+            return { content: [{ type: "text" as const, text: `Error finding sections: ${err instanceof Error ? err.message : String(err)}` }] };
           }
         }
       ),

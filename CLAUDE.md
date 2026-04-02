@@ -156,6 +156,7 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 | `CanvasList` | List all canvases in a channel (optional `channel_id`, defaults to current) |
 | `CanvasCreate` | Create a new canvas in the current channel. Returns `canvas_id`. |
 | `CanvasRead` | Read a canvas by `canvas_id` (or default channel canvas if omitted). Returns raw HTML — element IDs (`id='temp:C:...'`) are used by UpdateElementById / DeleteElementById. |
+| `CanvasFindSection` | Search canvas sections by text. Returns section IDs + text — feed IDs into UpdateElementById / DeleteElementById. |
 | `CanvasAppend` | Append a new section to the end of an existing canvas |
 | `CanvasUpdateElementById` | Replace a specific element inside a canvas by its raw element ID |
 | `CanvasDeleteElementById` | Delete a specific element inside a canvas by its raw element ID |

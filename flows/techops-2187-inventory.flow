@@ -1,0 +1,30 @@
+-- TECHOPS-2187: Inventory — find all untested ObjC classes
+-- Run once. Saves the class list to a file for batch processing.
+
+workflow "TECHOPS-2187 Inventory"
+  inputs: repo_path (required), output_file (required)
+
+  ask @claude-worker """
+    In {repo_path}, find every Objective-C class that has NO corresponding test file.
+
+    HOW TO SEARCH:
+    1. Find all .m files under the main app source (exclude Pods/, Carthage/, vendor/).
+    2. For each .m file, extract the class name from the filename (e.g. MFPFoodEntry.m → MFPFoodEntry).
+    3. Check if a test file exists anywhere under mfpUnitTests/ matching *{ClassName}Test*.swift or *{ClassName}Tests*.swift.
+    4. A class is "untested" if NO matching test file exists.
+
+    OUTPUT FORMAT:
+    Return ONLY a newline-separated list of untested class names, one per line.
+    No headers, no explanations, no markdown — just the class names.
+    Example:
+    MFPFoodEntry
+    MFPDiaryDay
+    MFPNutritionInfo
+  """ -> class_list
+
+  write {class_list} to {output_file}
+
+  send #techops-2187 """
+    Inventory complete. Found untested classes and saved to {output_file}.
+    Run the batch processor next to start generating tests.
+  """

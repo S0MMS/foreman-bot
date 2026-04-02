@@ -239,6 +239,39 @@ async function lookupSections(app: App, fileId: string, containsText: string): P
 }
 
 /**
+ * CanvasFindSection: Search for sections containing specific text. Returns section IDs + text.
+ * Searches all common section types: headings, paragraphs, code, quotes, lists.
+ */
+export async function findCanvasSections(
+  app: App,
+  fileId: string,
+  containsText: string
+): Promise<Array<{ id: string; type: string; text: string }>> {
+  const results: Array<{ id: string; type: string; text: string }> = [];
+  const seen = new Set<string>();
+  const sectionTypes = ["h1", "h2", "h3", "paragraph", "ordered_list", "bullet_list", "code", "quote"];
+
+  for (const sectionType of sectionTypes) {
+    try {
+      const lookupRes = await app.client.canvases.sections.lookup({
+        canvas_id: fileId,
+        criteria: { section_types: [sectionType as any], contains_text: containsText },
+      });
+      const sections = (lookupRes as any).sections || [];
+      for (const s of sections) {
+        if (s.id && !seen.has(s.id)) {
+          seen.add(s.id);
+          results.push({ id: s.id, type: sectionType, text: (s.text || "").trim() });
+        }
+      }
+    } catch {
+      // section type may not be supported — skip silently
+    }
+  }
+  return results;
+}
+
+/**
  * Look up ALL heading section IDs in a canvas.
  */
 async function lookupAllSections(app: App, fileId: string): Promise<string[]> {

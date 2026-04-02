@@ -1,0 +1,314 @@
+-- TECHOPS-2187: AI-Generated Unit Tests for mfp-ios
+-- Three workflows in one file:
+--   1. Inventory    — scan repo, find all untested ObjC classes, create status CSV
+--   2. Batch        — read CSV, pick next 3 pending classes, generate tests, update CSV
+--   3. Single Class — multi-model test generation for one class (called by Batch)
+--
+-- Single source of truth: techops-2187-status.csv
+--   Columns: class, status, commit, pr, reason
+--   Statuses: pending, completed, skipped
+--
+-- Workflow:
+--   Run "Inventory" once → creates the CSV with all classes set to "pending"
+--   Run "Batch" repeatedly → same command each time
+--                           → reads CSV, picks next 3 pending
+--                           → processes, commits, updates CSV rows
+--                           → creates PR, updates CSV with PR number
+--   Repeat until all classes are completed or skipped.
+
+-- ============================================================
+-- WORKFLOW 1: Inventory
+-- Run once to scan the repo and create the status CSV.
+-- Usage: /cc run techops-2187.flow Inventory repo_path=... status_csv=...
+-- ============================================================
+
+workflow "Inventory"
+  inputs: repo_path (required), status_csv (required)
+
+  ask @claude-worker """
+    In {repo_path}, find every Objective-C class that has NO corresponding test file.
+
+    HOW TO SEARCH:
+    1. Find all .m files under {repo_path}/Sources/ (this is where all the MFP ObjC source lives).
+    2. For each .m file, extract the class name from the filename (e.g. MFPFoodEntry.m → MFPFoodEntry).
+    3. Check if a test file exists anywhere under mfpUnitTests/ matching *{ClassName}Test*.swift or *{ClassName}Tests*.swift.
+    4. A class is "untested" if NO matching test file exists.
+
+    OUTPUT FORMAT:
+    Return a CSV with a header row and one row per untested class.
+    Columns: class,status,commit,pr,reason
+    Every row should have status "pending" and empty commit, pr, reason fields.
+    Example:
+    class,status,commit,pr,reason
+    MFPFoodEntry,pending,,,
+    MFPDiaryDay,pending,,,
+
+    Return ONLY the CSV. No explanations, no markdown code fences.
+  """ -> csv_content
+
+  write {csv_content} to {status_csv}
+
+  send #techops-2187 """
+    Inventory complete. Status CSV created at {status_csv}.
+    Run the Batch workflow to start generating tests.
+  """
+
+
+-- ============================================================
+-- WORKFLOW 2: Batch
+-- Reads the status CSV, picks the next 2 pending classes, processes them.
+-- Run this repeatedly — same command each time, it picks up where it left off.
+-- Usage: /cc run techops-2187.flow Batch repo_path=... status_csv=...
+-- ============================================================
+
+workflow "Batch"
+  inputs: repo_path (required), status_csv (required)
+
+  read {status_csv} -> csv_content
+
+  -- Pick the next 2 pending classes from the CSV
+  ask @claude-worker """
+    You are a CSV utility. Read this CSV and return the NEXT 3 class names
+    that have status "pending".
+
+    CSV:
+    {csv_content}
+
+    OUTPUT FORMAT:
+    Return ONLY the class names, one per line, no numbering, no headers, no markdown.
+    If fewer than 3 pending classes remain, return all remaining.
+    If NO pending classes remain, return exactly: ALL_DONE
+  """ -> batch_classes
+
+  if {batch_classes} contains "ALL_DONE"
+    send #techops-2187 "All classes have been processed! TECHOPS-2187 is complete."
+    stop "All classes processed."
+
+  send #techops-2187 "Starting batch: {batch_classes}"
+
+  -- Create a feature branch for this batch
+  ask @claude-worker """
+    In {repo_path}:
+    1. git fetch origin
+    2. git checkout -b techops-2187/test-gen-batch-$(date +%Y%m%d-%H%M%S) origin/develop
+    Report the branch name you created.
+  """ -> branch_name
+
+  -- Process each class: generate tests, then commit (only if passed)
+  for each class in {batch_classes}
+    run "Single Class Test Gen" with repo_path={repo_path}, target_class={class}
+
+    if {result_status} does not contain "skipped"
+      ask @claude-worker """
+        In {repo_path}:
+        1. git add -A mfpUnitTests/
+        2. git commit -m "TECHOPS-2187: add unit tests for {class}"
+        Report ONLY the short commit SHA (first 7 characters). Nothing else.
+      """ -> commit_sha
+
+      send #techops-2187 "Committed tests for {class}: {commit_sha}"
+
+      -- Update the CSV: change this class from pending to completed with commit SHA
+      read {status_csv} -> current_csv
+      ask @claude-worker """
+        You are a CSV utility. In this CSV, find the row where the class column is exactly "{class}"
+        and update it:
+        - Set status to: completed
+        - Set commit to: {commit_sha}
+        - Leave pr empty for now
+        - Leave reason empty
+
+        CSV:
+        {current_csv}
+
+        Return the COMPLETE updated CSV. All rows, header included. No markdown, no commentary.
+      """ -> updated_csv
+      write {updated_csv} to {status_csv}
+
+    if {result_status} contains "skipped"
+      -- Update the CSV: mark this class as skipped with reason
+      read {status_csv} -> current_csv
+      ask @claude-worker """
+        You are a CSV utility. In this CSV, find the row where the class column is exactly "{class}"
+        and update it:
+        - Set status to: skipped
+        - Leave commit empty
+        - Leave pr empty
+        - Set reason to: {result_status}
+
+        CSV:
+        {current_csv}
+
+        Return the COMPLETE updated CSV. All rows, header included. No markdown, no commentary.
+      """ -> updated_csv
+      write {updated_csv} to {status_csv}
+
+  -- Push and create PR for the batch
+  ask @claude-worker """
+    In {repo_path}:
+    1. Run: git push -u origin HEAD
+       If git push fails, report exactly: PUSH_FAILED
+    2. Run: gh pr create --title "TECHOPS-2187: AI-generated unit tests" --body "Auto-generated unit tests via multi-model pipeline. Branch: {branch_name}. Classes: {batch_classes}" --base develop
+       If gh pr create fails, report exactly: PR_FAILED
+    3. If both succeeded, copy the PR URL from the gh pr create output.
+    Report the FULL PR URL (e.g. https://github.com/org/repo/pull/142). Nothing else.
+  """ -> pr_result
+
+  -- Update CSV: set PR on all completed classes in this batch (only if PR actually created)
+  if {pr_result} does not contain "FAILED"
+    read {status_csv} -> current_csv
+    ask @claude-worker """
+      You are a CSV utility. In this CSV, find all rows where:
+      - status is "completed"
+      - pr column is empty
+      - the class name is one of these: {batch_classes}
+      Set the pr column to: {pr_result}
+
+      CSV:
+      {current_csv}
+
+      Return the COMPLETE updated CSV. All rows, header included. No markdown, no commentary.
+    """ -> updated_csv
+    write {updated_csv} to {status_csv}
+
+  send #techops-2187 """
+    Batch complete!
+    Branch: {branch_name}
+    Classes: {batch_classes}
+    PR: {pr_result}
+  """
+
+
+-- ============================================================
+-- WORKFLOW 3: Single Class Test Gen
+-- Multi-model generation → judge → lint → build/fix loop → flaky check.
+-- Called by Batch for each class. Can also run standalone.
+-- Usage: /cc run techops-2187.flow "Single Class Test Gen" repo_path=... target_class=...
+-- ============================================================
+
+workflow "Single Class Test Gen"
+  inputs: repo_path (required), target_class (required), output_file
+
+  -- Step 1: Three bots generate tests independently
+  at the same time
+    ask @claude-worker """
+      In {repo_path}, generate a Swift test file for the ObjC class "{target_class}".
+      Read its .h and .m files first.
+      RULES:
+      - @testable import mfpDebug
+      - Subclass BaseTestCase (or BaseTestCaseWithSetCurrentUser if needs user context)
+      - Call super.setUp() and super.tearDown()
+      - Reuse mocks from mfpUnitTests/Mocks/ — check there FIRST
+      - Use ServiceLocator.mock()/.unmock() for DI
+      - Guard ObjC returns with optional binding — no force-unwraps
+      - 3-5 test methods covering distinct behaviors
+      - Place in mfpUnitTests/ matching existing subdirectory structure
+      Return: file path and file content.
+    """ -> gen_claude
+
+    ask @gemini-worker """
+      In {repo_path}, generate a Swift test file for the ObjC class "{target_class}".
+      Read its .h and .m files first.
+      RULES:
+      - @testable import mfpDebug
+      - Subclass BaseTestCase (or BaseTestCaseWithSetCurrentUser if needs user context)
+      - Call super.setUp() and super.tearDown()
+      - Reuse mocks from mfpUnitTests/Mocks/ — check there FIRST
+      - Use ServiceLocator.mock()/.unmock() for DI
+      - Guard ObjC returns with optional binding — no force-unwraps
+      - 3-5 test methods covering distinct behaviors
+      - Place in mfpUnitTests/ matching existing subdirectory structure
+      Return: file path and file content.
+    """ -> gen_gemini
+
+    ask @gpt-worker """
+      In {repo_path}, generate a Swift test file for the ObjC class "{target_class}".
+      Read its .h and .m files first.
+      RULES:
+      - @testable import mfpDebug
+      - Subclass BaseTestCase (or BaseTestCaseWithSetCurrentUser if needs user context)
+      - Call super.setUp() and super.tearDown()
+      - Reuse mocks from mfpUnitTests/Mocks/ — check there FIRST
+      - Use ServiceLocator.mock()/.unmock() for DI
+      - Guard ObjC returns with optional binding — no force-unwraps
+      - 3-5 test methods covering distinct behaviors
+      - Place in mfpUnitTests/ matching existing subdirectory structure
+      Return: file path and file content.
+    """ -> gen_gpt
+
+  -- Step 2: Judge picks the best
+  ask @claude-judge """
+    Three test files generated for "{target_class}":
+    Claude: {gen_claude}
+    Gemini: {gen_gemini}
+    GPT: {gen_gpt}
+
+    Score each 1-10 on:
+    1. Behavioral coverage (tests behavior, not implementation)
+    2. Correctness (will compile against ObjC via bridging header)
+    3. Resilience (not brittle or coupled to internals)
+    4. Mock reuse (uses existing project mocks)
+    5. Readability (clear names, matches conventions)
+
+    Pick the best (or merge if complementary). Return final test file content and path.
+  """ -> best_test
+
+  -- Step 3: Write, lint, and build
+  ask @claude-worker """
+    In {repo_path}:
+    1. Write this test file to disk: {best_test}
+    2. Run swiftformat on the new file
+    3. Run swiftlint lint --fix on the new file, then fix any remaining warnings
+    4. Add it to the mfpUnitTests target in the .xcodeproj
+    5. Run: xcodebuild test -workspace MyFitnessPal.xcworkspace -scheme MyFitnessPal
+       -testPlan MyFitnessPal -destination 'platform=iOS Simulator,name=iPhone 16'
+       -only-testing:mfpUnitTests/<TestClassName>
+    6. If it fails, read errors and fix
+    Report: pass/fail, errors, fixes applied.
+  """ -> build_result
+
+  -- Step 3b: Fix loop if build failed (up to 3 more attempts)
+  if {build_result} means "failing"
+    repeat until {build_result} means "all tests pass", at most 3 times
+      ask @claude-worker """
+        In {repo_path}: previous build errors: {build_result}
+        Fix the test file, then re-run swiftformat and swiftlint lint --fix before rebuilding.
+        Same xcodebuild command.
+        Report: pass/fail, remaining errors.
+      """ -> build_result
+
+  if {build_result} means "still failing"
+    send #techops-2187 "SKIPPED {target_class} — build still failing after retries. Errors: {build_result}"
+    ask @claude-worker """
+      In {repo_path}: revert any uncommitted changes for the test file that was just created.
+      Run: git checkout -- .
+      Then reply with exactly this text: skipped — build failed after retries
+    """ -> result_status
+
+  -- Step 4: Flaky check — run 3x (only if build passed)
+  if {result_status} does not contain "skipped"
+    ask @claude-worker """
+      In {repo_path}: run the xcodebuild test command 3 times for the new test class.
+      Report: pass/fail per run. Flag any inconsistency.
+    """ -> flaky_check
+
+    if {flaky_check} contains "flaky"
+      send #techops-2187 "SKIPPED {target_class} — tests are flaky: {flaky_check}"
+      ask @claude-worker """
+        In {repo_path}: revert any uncommitted changes for the test file that was just created.
+        Run: git checkout -- .
+        Then reply with exactly this text: skipped — flaky tests
+      """ -> result_status
+
+  -- Step 5: Report (only if everything passed)
+  if {result_status} does not contain "skipped"
+    ask @claude-worker "Reply with exactly one word: passed" -> result_status
+    send #techops-2187 """
+      Test generation PASSED for {target_class}.
+      Judge scores: {best_test}
+      Build attempts: {build_result}
+      Flaky check: {flaky_check}
+    """
+
+  if {output_file} is not empty
+    write {build_result} to {output_file}
