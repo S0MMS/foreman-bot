@@ -262,7 +262,31 @@ async function lookupAllSections(app: App, fileId: string): Promise<string[]> {
 }
 
 /**
- * CanvasCreate: Append new content to the end of the canvas.
+ * CanvasCreate: Create a brand new canvas in a channel.
+ * Uses conversations.canvases.create — the only way to make a new canvas appear in a channel.
+ * Returns the new canvas file ID.
+ */
+export async function createChannelCanvas(
+  app: App,
+  channelId: string,
+  title: string,
+  markdown?: string,
+  botName?: string,
+): Promise<string> {
+  const tagged = markdown && botName ? tagMarkdown(botName, markdown) : markdown;
+  const res = await (app.client.conversations as any).canvases.create({
+    channel_id: channelId,
+    title,
+    ...(tagged ? { document_content: { type: "markdown", markdown: tagged } } : {}),
+  });
+  const canvasId = res?.canvas_id;
+  if (!canvasId) throw new Error(`conversations.canvases.create did not return a canvas_id`);
+  console.log(`[canvas] Created new canvas "${title}" (${canvasId}) in channel ${channelId}`);
+  return canvasId;
+}
+
+/**
+ * CanvasAppend: Append new content to the end of the canvas.
  * Automatically tags all headings with the bot's provenance marker.
  */
 export async function appendCanvasContent(app: App, fileId: string, markdown: string, botName: string): Promise<void> {

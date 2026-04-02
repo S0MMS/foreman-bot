@@ -5,9 +5,9 @@ import { execSync } from "child_process";
 import { join } from "path";
 import { homedir } from "os";
 import type { App } from "@slack/bolt";
-import { fetchChannelCanvas, fetchCanvasByFileId, listChannelCanvases, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
+import { fetchChannelCanvas, fetchCanvasByFileId, listChannelCanvases, createChannelCanvas, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById, getOwner } from "./canvas.js";
 import { getState, setCanvasFileId } from "./session.js";
-import { createJiraIssue, readJiraIssue, updateJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, transitionJiraIssue, assignJiraIssue, getJiraTransitions, getJiraIssueEditMeta, setJiraField, getJiraProjectKey, getJiraHost } from "./jira.js";
+import { createJiraIssue, readJiraIssue, updateJiraIssue, deleteJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, transitionJiraIssue, assignJiraIssue, getJiraTransitions, getJiraIssueEditMeta, setJiraField, getJiraProjectKey, getJiraHost } from "./jira.js";
 import { readConfluencePage, searchConfluencePages, createConfluencePage, updateConfluencePage } from "./confluence.js";
 import { createPR, readPR, readPRComments, readIssue, searchGitHub, listPRs } from "./github.js";
 import { readConfig } from "./config.js";
@@ -96,10 +96,39 @@ export function createCanvasMcpServer(channelId: string, app: App) {
       ),
       tool(
         "CanvasCreate",
-        "Append new content to the end of this Slack channel's canvas. Use this when the user asks you to add or create new content. " +
+        "Create a brand new canvas in the current Slack channel. Use this when you need a new canvas — not to add content to an existing one. " +
+        "Returns the canvas_id of the newly created canvas. Save this ID and use it with CanvasAppend, CanvasUpdate, and CanvasRead to work with the canvas. " +
+        "Call GetCurrentChannel first if you are unsure which channel you are in.",
+        {
+          title: z.string().describe("The title of the new canvas (e.g. 'FlowSpec Reference', 'Project Tracker')."),
+          markdown: z.string().optional().describe("Optional initial markdown content for the canvas. If omitted, the canvas is created empty."),
+        },
+        async ({ title, markdown }) => {
+          try {
+            const canvasId = await createChannelCanvas(app, channelId, title, markdown, getBotName());
+            setCanvasFileId(channelId, canvasId);
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Canvas created successfully.\nTitle: ${title}\nCanvas ID: ${canvasId}\n\nUse this canvas_id with CanvasAppend, CanvasUpdate, and CanvasRead to work with this canvas.`,
+              }],
+            };
+          } catch (err) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Error creating canvas: ${err instanceof Error ? err.message : String(err)}`,
+              }],
+            };
+          }
+        }
+      ),
+      tool(
+        "CanvasAppend",
+        "Append new content to the end of an existing canvas. Use this to add new sections to a canvas that already exists. " +
         "Your headings will be automatically tagged with your bot name so they can be identified later. " +
         "Always start new sections with a heading (## Heading) so they can be updated or deleted later. " +
-        "Pass canvas_id (from CanvasList) to append to a specific canvas instead of the default one.",
+        "You must provide a canvas_id (from CanvasList) to target the correct canvas.",
         {
           markdown: z.string().describe("The markdown content to append. Should start with a heading (e.g. ## Section Title)."),
           canvas_id: z.string().optional().describe("Optional canvas file ID (from CanvasList) to target a specific canvas. Omit to use the default canvas."),
@@ -329,10 +358,11 @@ export function createCanvasMcpServer(channelId: string, app: App) {
           issueType: z.string().optional().describe("Issue type: Task, Story, Bug, Epic. Defaults to Task."),
           labels: z.array(z.string()).optional().describe("Optional labels to apply"),
           priority: z.string().optional().describe("Priority: Highest, High, Medium, Low, Lowest"),
+          project: z.string().optional().describe("Jira project key (e.g. TECHOPS, POW). Defaults to the configured project."),
         },
-        async ({ summary, description, issueType, labels, priority }) => {
+        async ({ summary, description, issueType, labels, priority, project }) => {
           try {
-            const result = await createJiraIssue({ summary, description, issueType, labels, priority });
+            const result = await createJiraIssue({ summary, description, issueType, labels, priority, projectKey: project });
             return { content: [{ type: "text" as const, text: `Created ${result.key}: ${result.url}` }] };
           } catch (err) {
             return {
@@ -359,6 +389,24 @@ export function createCanvasMcpServer(channelId: string, app: App) {
           } catch (err) {
             return {
               content: [{ type: "text" as const, text: `Error updating Jira ticket: ${err instanceof Error ? err.message : String(err)}` }],
+            };
+          }
+        }
+      ),
+      tool(
+        "JiraDeleteTicket",
+        "Permanently delete a Jira ticket. This action is IRREVERSIBLE — the ticket cannot be recovered. " +
+        "Only use this when explicitly asked to delete a ticket, not to close or resolve it.",
+        {
+          issueKey: z.string().describe("The Jira issue key to delete (e.g. POW-123, TECHOPS-456)"),
+        },
+        async ({ issueKey }) => {
+          try {
+            await deleteJiraIssue(issueKey);
+            return { content: [{ type: "text" as const, text: `Deleted ${issueKey}.` }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `Error deleting Jira ticket: ${err instanceof Error ? err.message : String(err)}` }],
             };
           }
         }
@@ -670,7 +718,7 @@ export function createCanvasMcpServer(channelId: string, app: App) {
         async ({ pageId, title, body }) => {
           try {
             const result = await updateConfluencePage(pageId, { title, body });
-            return { content: [{ type: "text" as const, text: `Updated page: ${result.url}` }] };
+            return { content: [{ type: "text" as const, text: `Updated page: ${result.url} (version ${result.previousVersion} → ${result.version})\nDEBUG: ${result.debug}` }] };
           } catch (err) {
             return {
               content: [{ type: "text" as const, text: `Error updating Confluence page: ${err instanceof Error ? err.message : String(err)}` }],
@@ -964,6 +1012,22 @@ export function createCanvasMcpServer(channelId: string, app: App) {
               content: [{ type: "text" as const, text: `Error posting message: ${err instanceof Error ? err.message : String(err)}` }],
             };
           }
+        }
+      ),
+      tool(
+        "GetCurrentChannel",
+        "Returns the Slack channel ID this bot is currently operating in. " +
+        "Use this before creating canvases, posting messages, or any action that targets the current channel. " +
+        "Always call this first if you are unsure which channel you are in.",
+        {},
+        async () => {
+          const name = getBotName();
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Current channel ID: ${channelId}\nBot name: ${name}`,
+            }],
+          };
         }
       ),
       tool(

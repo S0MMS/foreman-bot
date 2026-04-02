@@ -154,9 +154,10 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 | Tool | Description |
 |------|-------------|
 | `CanvasList` | List all canvases in this channel (returns title + file ID for each) |
+| `CanvasCreate` | Create a brand new canvas in the current channel. Returns `canvas_id` — save it for subsequent operations. |
 | `CanvasRead` | Read the current channel's default canvas (optional `canvas_id` to target a specific one) |
-| `CanvasCreate` | Write/replace a canvas (optional `canvas_id` to target a specific one) |
-| `CanvasUpdate` | Append content to a canvas (optional `canvas_id` to target a specific one) |
+| `CanvasAppend` | Append content to the end of an existing canvas (requires `canvas_id` from CanvasList) |
+| `CanvasUpdate` | Replace a specific section in an existing canvas by heading text |
 | `CanvasDelete` | Delete a bot-tagged section from a canvas (optional `canvas_id`) |
 | `CanvasReadById` | Read any canvas by file ID |
 | `CanvasUpdateById` | Update any canvas by file ID |
@@ -173,6 +174,7 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 | `JiraGetTransitions` | List available transitions + required fields for a ticket |
 | `JiraGetFieldOptions` | List editable fields with allowed values (use before JiraSetField) |
 | `JiraSetField` | Set a custom field by name (e.g. Story Points, Work Type) |
+| `GetCurrentChannel` | Returns the channel ID and bot name for the current session. Call this first if unsure which channel you are in. |
 | `PostMessage` | Post a message to any Slack channel (auto-appends `— BotName (model)` signature) |
 | `ReadChannel` | Read recent message history from any Slack channel |
 
