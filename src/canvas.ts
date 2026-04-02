@@ -286,6 +286,34 @@ export async function createChannelCanvas(
 }
 
 /**
+ * CanvasUpdate: Replace the entire content of a canvas.
+ * Deletes all existing sections, then inserts the new markdown content.
+ */
+export async function replaceCanvasContent(app: App, fileId: string, markdown: string, botName: string): Promise<void> {
+  const tagged = tagMarkdown(botName, markdown);
+
+  // Delete all existing sections
+  const sectionIds = await lookupAllSections(app, fileId);
+  for (const id of sectionIds) {
+    try {
+      await (app.client.canvases as any).edit({
+        canvas_id: fileId,
+        changes: [{ operation: "delete", section_id: id }],
+      });
+    } catch (err: any) {
+      console.warn(`[canvas] Failed to delete section ${id} during replace:`, err?.data?.error || err?.message);
+    }
+  }
+
+  // Insert new content
+  await (app.client.canvases as any).edit({
+    canvas_id: fileId,
+    changes: [{ operation: "insert_at_end", document_content: { type: "markdown", markdown: tagged } }],
+  });
+  console.log(`[canvas] Replaced all content in canvas ${fileId} as [${botName}]`);
+}
+
+/**
  * CanvasAppend: Append new content to the end of the canvas.
  * Automatically tags all headings with the bot's provenance marker.
  */
@@ -354,7 +382,16 @@ export async function updateCanvasSection(
 }
 
 /**
- * CanvasDelete: Find a section by its heading text and delete it.
+ * CanvasDelete: Permanently delete an entire canvas by its ID.
+ * This is irreversible — the canvas and all its content will be gone.
+ */
+export async function deleteCanvas(app: App, canvasId: string): Promise<void> {
+  await app.client.canvases.delete({ canvas_id: canvasId });
+  console.log(`[canvas] Deleted canvas ${canvasId}`);
+}
+
+/**
+ * CanvasDeleteSection: Find a section by its heading text and delete it.
  */
 export async function deleteCanvasSection(
   app: App,

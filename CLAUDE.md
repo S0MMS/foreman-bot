@@ -153,15 +153,12 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 
 | Tool | Description |
 |------|-------------|
-| `CanvasList` | List all canvases in this channel (returns title + file ID for each) |
-| `CanvasCreate` | Create a brand new canvas in the current channel. Returns `canvas_id` — save it for subsequent operations. |
-| `CanvasRead` | Read the current channel's default canvas (optional `canvas_id` to target a specific one) |
-| `CanvasAppend` | Append content to the end of an existing canvas (requires `canvas_id` from CanvasList) |
-| `CanvasUpdate` | Replace a specific section in an existing canvas by heading text |
-| `CanvasDelete` | Delete a bot-tagged section from a canvas (optional `canvas_id`) |
-| `CanvasReadById` | Read any canvas by file ID |
-| `CanvasUpdateById` | Update any canvas by file ID |
-| `CanvasDeleteById` | Delete a section from any canvas by file ID |
+| `CanvasList` | List all canvases in a channel (optional `channel_id`, defaults to current) |
+| `CanvasCreate` | Create a new canvas in the current channel. Returns `canvas_id`. |
+| `CanvasRead` | Read a canvas by `canvas_id` (or default channel canvas if omitted). Returns raw HTML — element IDs (`id='temp:C:...'`) are used by UpdateElementById / DeleteElementById. |
+| `CanvasAppend` | Append a new section to the end of an existing canvas |
+| `CanvasUpdateElementById` | Replace a specific element inside a canvas by its raw element ID |
+| `CanvasDeleteElementById` | Delete a specific element inside a canvas by its raw element ID |
 | `DiagramCreate` | Create a Mermaid diagram and render it to the canvas |
 | `JiraCreateTicket` | Create a new Jira issue |
 | `JiraReadTicket` | Read a Jira issue by key |
