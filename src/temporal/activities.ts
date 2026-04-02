@@ -7,6 +7,7 @@
 import { Context } from '@temporalio/activity';
 import { getSlackApp, getProcessChannelMessage } from './slack-context.js';
 import { clearSession } from '../session.js';
+import { getKafkaClient, getProducer } from '../kafka.js';
 
 const POLL_MS = 5_000;
 
@@ -135,6 +136,84 @@ export async function dispatchToBot(
     clearInterval(heartbeat);
     lock.release();
   }
+}
+
+// ── Kafka Dispatch ────────────────────────────────────────────────────────────
+
+/**
+ * Dispatch a prompt to an explicit bot inbox topic and await the response.
+ *
+ * This is the Kafka-native alternative to dispatchToBot(). It does NOT touch
+ * the Slack transport — dispatchToBot() is completely unchanged.
+ *
+ * @param botInboxName  — The full inbox topic name, e.g. "betty.inbox"
+ * @param prompt        — The prompt to send
+ * @returns             — The response text from the bot's outbox
+ *
+ * Requires: Redpanda running + a Kafka consumer loop processing the bot's inbox.
+ * If those are not up, this will timeout after 5 minutes.
+ */
+export async function dispatchToBotInbox(
+  botInboxName: string,
+  prompt: string,
+): Promise<string> {
+  const { randomUUID } = await import('crypto');
+  const correlationId = randomUUID();
+  const outboxTopic = botInboxName.replace(/\.inbox$/, '.outbox');
+
+  // Produce the prompt to the bot's inbox topic
+  const p = await getProducer();
+  await p.send({
+    topic: botInboxName,
+    messages: [{
+      key: correlationId,
+      value: JSON.stringify({
+        id: correlationId,
+        correlationId,
+        prompt,
+        timestamp: new Date().toISOString(),
+      }),
+    }],
+  });
+
+  // Consume from the outbox, waiting for the matching correlationId response
+  const consumer = getKafkaClient().consumer({ groupId: `foreman-dispatch-${correlationId}` });
+  await consumer.connect();
+  await consumer.subscribe({ topic: outboxTopic, fromBeginning: false });
+
+  const TIMEOUT_MS = 5 * 60_000;
+
+  return new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(async () => {
+      await consumer.disconnect().catch(() => {});
+      reject(new Error(`dispatchToBotInbox: timeout waiting for response on ${outboxTopic}`));
+    }, TIMEOUT_MS);
+
+    const heartbeat = setInterval(() => {
+      Context.current().heartbeat({ botInboxName, correlationId, status: 'waiting' });
+    }, 30_000);
+
+    consumer.run({
+      eachMessage: async ({ message }) => {
+        try {
+          const payload = JSON.parse(message.value?.toString() || '{}');
+          if (payload.correlationId === correlationId) {
+            clearTimeout(timeout);
+            clearInterval(heartbeat);
+            await consumer.disconnect().catch(() => {});
+            resolve(payload.result ?? payload.response ?? '');
+          }
+        } catch {
+          // ignore unparseable messages
+        }
+      },
+    }).catch(async (err) => {
+      clearTimeout(timeout);
+      clearInterval(heartbeat);
+      await consumer.disconnect().catch(() => {});
+      reject(err);
+    });
+  });
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────

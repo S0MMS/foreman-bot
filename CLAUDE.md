@@ -302,6 +302,46 @@ Write under `## Acceptance Criteria` using **Gherkin format** (mandatory):
 
 Each `Given`/`When`/`Then`/`And` must be on its own line, wrapped in backticks, with a blank line between each (Slack canvas API collapses single newlines).
 
+## Foreman 2.0 — Kafka/Redpanda Bot Transport
+
+Foreman 2.0 adds Kafka/Redpanda as a bot-to-bot communication layer alongside the existing Slack transport. **Slack continues to work exactly as today — no breaking changes.**
+
+### Infrastructure
+| Service | URL | How to start |
+|---|---|---|
+| Redpanda broker | `localhost:19092` | `docker compose up` |
+| Redpanda Console | `localhost:8080` | `docker compose up` |
+| Temporal server | `localhost:7233` | `temporal server start-dev` |
+| Temporal UI | `localhost:8233` | (included with above) |
+
+`docker-compose.yml` — Redpanda only. Temporal is NOT in Docker — runs natively via Homebrew.
+
+### bots.yaml — Bot Registry
+`bots.yaml` is the single source of truth for all bot identities. On startup, Foreman reads it and auto-creates Kafka topic pairs for each bot: `{name}.inbox` / `{name}.outbox`.
+
+Bot types: `sdk` (Anthropic/OpenAI/Gemini), `webhook` (HTTP endpoint), `human` (Slack DM gate), `mock` (testing).
+
+Current bots: `betty`, `clive`, `gemini-worker`, `gpt-worker`, `claude-judge`, `test-double`.
+
+### Kafka Dispatch
+Two dispatch functions — choose explicitly:
+
+| Function | Transport | When to use |
+|---|---|---|
+| `dispatchToBot(channelId, prompt)` | Slack (direct SDK) | All existing workflows — unchanged |
+| `dispatchToBotInbox("betty.inbox", prompt)` | Kafka | New Foreman 2.0 workflows |
+
+`dispatchToBotInbox` requires: Redpanda running + Kafka consumer loop processing the bot's inbox (Phase 2 — not yet built). If the consumer loop isn't running, messages appear in Redpanda Console but nothing responds.
+
+### Key files
+| File | Purpose |
+|---|---|
+| `bots.yaml` | Bot registry — source of truth |
+| `src/bots.ts` | YAML parser, `getAllBots()`, `getAllTopics()`, `getBot()` |
+| `src/kafka.ts` | KafkaJS client, `ensureBotTopics()`, `getProducer()` |
+| `docker-compose.yml` | Redpanda broker + Console |
+| `src/temporal/activities.ts` | `dispatchToBotInbox()` alongside existing `dispatchToBot()` |
+
 ## Temporal Workflow Engine
 
 Foreman integrates with Temporal as its workflow execution platform. Three processes make up the full system:

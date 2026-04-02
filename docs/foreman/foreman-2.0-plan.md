@@ -11,10 +11,12 @@
 **Tasks:**
 - [x] Define `bots.yaml` schema — see below
 - [x] Write `src/bots.ts` — YAML parser, bot registry, type definitions
-- [ ] Add Redpanda to `docker-compose.yml`
-- [ ] On Foreman startup: read `bots.yaml`, auto-create `{name}.inbox` / `{name}.outbox` topic pairs in Redpanda
+- [x] Add Redpanda to `docker-compose.yml`
+- [x] On Foreman startup: read `bots.yaml`, auto-create `{name}.inbox` / `{name}.outbox` topic pairs in Redpanda
 
-**Done when:** `docker compose up` starts Temporal + Redpanda, Foreman reads `bots.yaml` and topics appear in Redpanda Console at `localhost:8080`.
+**Done when:** `docker compose up` starts Redpanda, Foreman reads `bots.yaml` and topics appear in Redpanda Console at `localhost:8080`.
+
+**STATUS: COMPLETE ✅** — Docker Desktop installed, Redpanda running, all bot topics visible in Console at `localhost:8080`.
 
 ### bots.yaml Schema
 
@@ -46,13 +48,17 @@ Key exported functions from `src/bots.ts`:
 **What:** Foreman listens to each bot's inbox topic, processes messages through the right SDK adapter, and produces responses to the outbox topic.
 
 **Tasks:**
-- Add Kafka consumer loop in Foreman — one consumer per bot in `bots.yaml`
-- Each consumer: reads from `{name}.inbox` → looks up SessionState → calls correct SDK adapter → produces to `{name}.outbox`
-- Message envelope schema: `{ id, correlationId, prompt, botName, timestamp }`
-- Update `dispatchToBot()` in `activities.ts`: produce to `{name}.inbox`, await matching `correlationId` on `{name}.outbox`
-- Per-bot mutex lock moves from in-memory to Kafka consumer group semantics
+- [x] `dispatchToBotInbox(botInboxName, prompt)` added to `activities.ts` — Kafka-native dispatch, does NOT touch Slack transport
+- [ ] Kafka consumer loop in Foreman — one consumer per bot in `bots.yaml`
+- [ ] Each consumer: reads from `{name}.inbox` → calls correct SDK adapter → produces to `{name}.outbox`
+- [ ] Per-bot mutex → Kafka consumer group semantics
 
-**Done when:** A Temporal workflow can dispatch to a bot via Kafka and receive the response. Slack still works in parallel — no regression.
+**Key design decision:** `dispatchToBot()` is **unchanged**. A new parallel function `dispatchToBotInbox(botInboxName, prompt)` handles Kafka dispatch explicitly. Callers opt in — no regression risk.
+
+- `dispatchToBot(channelId, prompt)` — direct SDK call, Slack transport, today's behavior
+- `dispatchToBotInbox("betty.inbox", prompt)` — produces to Kafka inbox, awaits `correlationId` on outbox
+
+**Done when:** A Temporal workflow can call `dispatchToBotInbox("betty.inbox", prompt)` and receive a response. Slack still works in parallel — no regression.
 
 ---
 
