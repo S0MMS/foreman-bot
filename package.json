@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.83",
+    "@anthropic-ai/sdk": "^0.82.0",
     "@google/generative-ai": "^0.24.1",
     "@slack/bolt": "^4.1.0",
     "@temporalio/activity": "^1.15.0",
@@ -40,7 +41,10 @@
     "@types/express": "^5.0.6",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
-    "openai": "^6.32.0"
+    "kafkajs": "^2.2.4",
+    "kafkajs-snappy": "^1.1.0",
+    "openai": "^6.32.0",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

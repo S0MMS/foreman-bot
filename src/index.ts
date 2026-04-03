@@ -19,6 +19,8 @@ import { startSession, resumeSession } from "./claude.js";
 import { getState } from "./session.js";
 import { startWebhookServer } from "./webhook.js";
 import { startTemporalWorker } from "./temporal/worker.js";
+import { loadBotRegistry } from "./bots.js";
+import { ensureBotTopics, startBotConsumers } from "./kafka.js";
 
 // Prevent "nested session" detection when the Agent SDK spawns Claude Code.
 // The SDK inherits process.env and sets CLAUDECODE=1 on child processes;
@@ -48,6 +50,17 @@ loadSessions();
   // Start Temporal worker (graceful — won't crash Foreman if server is not running)
   startTemporalWorker().catch((err) => {
     console.warn('[Temporal] Worker not started (is the Temporal server running?):', err.message);
+  });
+
+  // Load bot registry from bots.yaml and ensure Kafka topics exist in Redpanda
+  // Graceful — won't crash Foreman if Redpanda is not running
+  loadBotRegistry();
+  ensureBotTopics().catch((err) => {
+    console.warn('[kafka] Topic setup skipped:', err.message);
+  });
+  // Start Kafka consumer loop — non-fatal, Slack transport unaffected if this fails
+  startBotConsumers().catch((err) => {
+    console.warn('[kafka] Bot consumers not started:', err.message);
   });
 
   console.log("Foreman is running");
