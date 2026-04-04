@@ -152,10 +152,11 @@ export async function createJiraIssue(opts: {
   issueType?: string;
   labels?: string[];
   priority?: string;
+  projectKey?: string;
 }): Promise<{ key: string; url: string }> {
   const config = getJiraConfig();
   const fields: any = {
-    project: { key: config.projectKey },
+    project: { key: opts.projectKey || config.projectKey },
     issuetype: { name: opts.issueType || "Task" },
     summary: opts.summary,
     description: markdownToAdf(opts.description),
@@ -446,6 +447,13 @@ export interface JiraMention {
   commentBody: string;
   commentCreated: string;
   url: string;
+}
+
+/** Permanently delete a Jira issue. This action is irreversible. */
+export async function deleteJiraIssue(issueKey: string): Promise<void> {
+  await jiraFetch(`/rest/api/3/issue/${issueKey}`, {
+    method: "DELETE",
+  });
 }
 
 /** Find recent comments that mention the current user */

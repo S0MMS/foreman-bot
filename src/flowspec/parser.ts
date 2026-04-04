@@ -202,6 +202,7 @@ class Parser {
       ['is empty', 'is empty'],
       ['is above', 'is above'],
       ['is below', 'is below'],
+      ['does not contain', 'does not contain'],
       ['contains', 'contains'],
       ['equals', 'equals'],
       ['means', 'means'],

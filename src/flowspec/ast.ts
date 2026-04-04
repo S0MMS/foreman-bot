@@ -7,6 +7,7 @@
 
 export type ConditionOp =
   | 'contains'
+  | 'does not contain'
   | 'equals'
   | 'means'
   | 'is above'

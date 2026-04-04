@@ -95,6 +95,7 @@ The **AT** space is the central hub for the AI Transformation effort.
 | TECHOPS-2183 | AI Review & Standards Automation (Epic) | Backlog |
 | TECHOPS-2211 | Build Agent Infrastructure (Epic) | Backlog |
 | TECHOPS-2205 | Lay the Foundation — Vision, Process Mapping & Dashboard (Epic) | Backlog |
+| TECHOPS-2235 | AI Policy & Governance Framework (Epic) | To Do |
 
 ### Tasks
 
@@ -113,6 +114,17 @@ The **AT** space is the central hub for the AI Transformation effort.
 | TECHOPS-2208 | Build progress dashboard for Pipeline North Star and 5 strategic metrics | Backlog | Tyler Talaga |
 | TECHOPS-2209 | Help deploying Slackbot (SocketMode + AI Agent) to Kubernetes | Backlog | Lejla Prijic |
 | TECHOPS-2185 | Validate and refine Tier 1 repo list from Backstage | Done | Harley Nuss |
+| TECHOPS-2236 | Consolidate and share existing AI demos & POCs | To Do | — |
+| TECHOPS-2237 | Draft AI Policy: Constitution file standards | To Do | — |
+| TECHOPS-2238 | Draft AI Policy: Agent data access scoping | To Do | — |
+| TECHOPS-2239 | Draft AI Policy: Cost alerting thresholds | To Do | — |
+| TECHOPS-2240 | Draft AI Policy: Service account token governance | To Do | — |
+| TECHOPS-2241 | Draft AI Policy: AI-generated code attribution | To Do | — |
+| TECHOPS-2242 | Draft AI Policy: Tiered review / auto-merge criteria | To Do | — |
+| TECHOPS-2243 | Draft AI Policy: Agent deployment conditions | To Do | — |
+| TECHOPS-2244 | Draft AI Policy: Cross-agent communication guardrails | To Do | — |
+| TECHOPS-2245 | Surface FP SDLC requirements into MFP policies | To Do | — |
+| TECHOPS-2246 | AI Policy: Canonical AI Tooling Registry — Two-Tier Architecture | To Do | — |
 
 ---
 
@@ -202,4 +214,4 @@ The **AT** space is the central hub for the AI Transformation effort.
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-03-31*

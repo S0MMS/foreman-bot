@@ -70,7 +70,7 @@ export async function readConfluencePage(pageId: string): Promise<ConfluencePage
     spaceId: result.spaceId,
     status: result.status,
     url: `${config.host}/wiki${result._links?.webui || `/pages/${result.id}`}`,
-    body: result.body?.storage?.value || "",
+    body: stripHtml(result.body?.storage?.value || ""),
     version: result.version?.number || 1,
   };
 }
@@ -133,31 +133,45 @@ export async function createConfluencePage(opts: {
 export async function updateConfluencePage(pageId: string, opts: {
   title?: string;
   body?: string;
-}): Promise<{ id: string; url: string }> {
+}): Promise<{ id: string; url: string; version: number | string; previousVersion: number; debug: string }> {
   const config = getConfluenceConfig();
 
-  // Get current page to read version number and title
-  const current = await readConfluencePage(pageId);
+  // Fetch raw storage format for version number and body fallback (v2 read works fine)
+  const current = await confluenceFetch(`/api/v2/pages/${pageId}?body-format=storage`);
+  const currentVersion = current.version?.number || 1;
 
+  // Use v1 API for the PUT — v2 silently rejects storage format updates
   const payload: any = {
-    id: pageId,
-    status: "current",
+    version: { number: currentVersion + 1 },
     title: opts.title || current.title,
-    version: { number: current.version + 1 },
+    type: "page",
     body: {
-      representation: "storage",
-      value: opts.body ? markdownToConfluenceStorage(opts.body) : current.body,
+      storage: {
+        value: opts.body ? markdownToConfluenceStorage(opts.body) : (current.body?.storage?.value || ""),
+        representation: "storage",
+      },
     },
   };
 
-  const result = await confluenceFetch(`/api/v2/pages/${pageId}`, {
+  const result = await confluenceFetch(`/rest/api/content/${pageId}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
 
+  const newVersion = result.version?.number ?? result.version ?? "unknown";
+  const debug = JSON.stringify({
+    status: result?.status,
+    id: result?.id,
+    version: result?.version,
+    sentVersion: currentVersion + 1,
+    keys: result ? Object.keys(result) : [],
+  }).slice(0, 800);
   return {
     id: result.id,
     url: `${config.host}/wiki${result._links?.webui || `/pages/${result.id}`}`,
+    version: newVersion,
+    previousVersion: currentVersion,
+    debug,
   };
 }
 
@@ -166,37 +180,94 @@ function markdownToConfluenceStorage(markdown: string): string {
   const lines = markdown.split("\n");
   const parts: string[] = [];
   let inList = false;
+  let inOrderedList = false;
+  let inCodeBlock = false;
+  let codeBlockLang = "";
+  let codeLines: string[] = [];
+
+  const processInline = (text: string): string => {
+    text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    text = text.replace(/\*(.+?)\*/g, "<em>$1</em>");
+    text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    return text;
+  };
 
   for (const line of lines) {
+    // Code block start
+    const codeBlockStart = line.match(/^```(\w*)/);
+    if (codeBlockStart && !inCodeBlock) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      if (inOrderedList) { parts.push("</ol>"); inOrderedList = false; }
+      inCodeBlock = true;
+      codeBlockLang = codeBlockStart[1] || "";
+      codeLines = [];
+      continue;
+    }
+    // Code block end
+    if (line.match(/^```/) && inCodeBlock) {
+      inCodeBlock = false;
+      const code = codeLines.join("\n");
+      const langAttr = codeBlockLang ? `<ac:parameter ac:name="language">${codeBlockLang}</ac:parameter>` : "";
+      parts.push(`<ac:structured-macro ac:name="code">${langAttr}<ac:plain-text-body><![CDATA[${code}]]></ac:plain-text-body></ac:structured-macro>`);
+      continue;
+    }
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
     // Headings
     const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
     if (headingMatch) {
       if (inList) { parts.push("</ul>"); inList = false; }
+      if (inOrderedList) { parts.push("</ol>"); inOrderedList = false; }
       const level = headingMatch[1].length;
-      parts.push(`<h${level}>${escapeHtml(headingMatch[2])}</h${level}>`);
+      parts.push(`<h${level}>${processInline(escapeHtml(headingMatch[2]))}</h${level}>`);
+      continue;
+    }
+
+    // Horizontal rule
+    if (line.match(/^---+$/) || line.match(/^\*\*\*+$/)) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      if (inOrderedList) { parts.push("</ol>"); inOrderedList = false; }
+      parts.push("<hr/>");
       continue;
     }
 
     // Bullet list items
     const bulletMatch = line.match(/^[-*]\s+(.+)/);
     if (bulletMatch) {
+      if (inOrderedList) { parts.push("</ol>"); inOrderedList = false; }
       if (!inList) { parts.push("<ul>"); inList = true; }
-      parts.push(`<li>${escapeHtml(bulletMatch[1])}</li>`);
+      parts.push(`<li>${processInline(escapeHtml(bulletMatch[1]))}</li>`);
+      continue;
+    }
+
+    // Numbered list items
+    const numberedMatch = line.match(/^\d+\.\s+(.+)/);
+    if (numberedMatch) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      if (!inOrderedList) { parts.push("<ol>"); inOrderedList = true; }
+      parts.push(`<li>${processInline(escapeHtml(numberedMatch[1]))}</li>`);
       continue;
     }
 
     // Empty line
     if (line.trim() === "") {
       if (inList) { parts.push("</ul>"); inList = false; }
+      if (inOrderedList) { parts.push("</ol>"); inOrderedList = false; }
       continue;
     }
 
     // Regular paragraph
     if (inList) { parts.push("</ul>"); inList = false; }
-    parts.push(`<p>${escapeHtml(line)}</p>`);
+    if (inOrderedList) { parts.push("</ol>"); inOrderedList = false; }
+    parts.push(`<p>${processInline(escapeHtml(line))}</p>`);
   }
 
   if (inList) parts.push("</ul>");
+  if (inOrderedList) parts.push("</ol>");
   return parts.join("\n");
 }
 
@@ -206,4 +277,18 @@ function escapeHtml(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<\/(h[1-6]|p|li|ul|ol|div)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

@@ -18,6 +18,7 @@ bots:
   # ── SDK Bots (local Anthropic/OpenAI/Gemini) ────────────────────────────────
 
   betty:
+    roster: "TECHOPS-2187"
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
@@ -26,6 +27,7 @@ bots:
       code and explain your thinking clearly. You are precise and thorough.
 
   clive:
+    roster: "TECHOPS-2187"
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
@@ -34,6 +36,7 @@ bots:
       suggest improvements, and think about maintainability and scale.
 
   gemini-worker:
+    roster: "PYTHIA"
     type: sdk
     provider: gemini
     model: gemini-2.5-flash
@@ -42,6 +45,7 @@ bots:
       reasoning, and flag uncertainty clearly.
 
   gpt-worker:
+    roster: "PYTHIA"
     type: sdk
     provider: openai
     model: gpt-4o
@@ -50,6 +54,7 @@ bots:
       reasoning, and flag uncertainty clearly.
 
   claude-judge:
+    roster: "TECHOPS-2187"
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6

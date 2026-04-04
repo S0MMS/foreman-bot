@@ -7,7 +7,7 @@ import { readConfig } from "../config.js";
 import { getState, setRunning, setAbortController } from "../session.js";
 import type { AgentAdapter, AgentOptions, QueryResult } from "./AgentAdapter.js";
 import type { App } from "@slack/bolt";
-import { createJiraIssue, readJiraIssue, updateJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, getJiraProjectKey, getJiraHost } from "../jira.js";
+import { createJiraIssue, readJiraIssue, updateJiraIssue, deleteJiraIssue, searchJiraIssues, addJiraComment, updateJiraComment, deleteJiraComment, getJiraProjectKey, getJiraHost } from "../jira.js";
 import { readConfluencePage, searchConfluencePages, createConfluencePage, updateConfluencePage } from "../confluence.js";
 import { createPR, readPR, readPRComments, readIssue, searchGitHub, listPRs } from "../github.js";
 import { fetchChannelCanvas, appendCanvasContent, updateCanvasSection, deleteCanvasSection, readCanvasById, updateCanvasById, deleteCanvasById } from "../canvas.js";
@@ -104,9 +104,10 @@ export const TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     },
   },
   // Jira
-  { type: "function", function: { name: "JiraCreateTicket", description: "Create a Jira ticket.", parameters: { type: "object", properties: { summary: { type: "string" }, description: { type: "string" }, issueType: { type: "string", description: "Task, Story, Bug, or Epic. Default: Task." }, labels: { type: "array", items: { type: "string" } }, priority: { type: "string", description: "Highest, High, Medium, Low, or Lowest." } }, required: ["summary", "description"] } } },
+  { type: "function", function: { name: "JiraCreateTicket", description: "Create a Jira ticket.", parameters: { type: "object", properties: { summary: { type: "string" }, description: { type: "string" }, issueType: { type: "string", description: "Task, Story, Bug, or Epic. Default: Task." }, labels: { type: "array", items: { type: "string" } }, priority: { type: "string", description: "Highest, High, Medium, Low, or Lowest." }, project: { type: "string", description: "Jira project key (e.g. TECHOPS, POW). Defaults to the configured project." } }, required: ["summary", "description"] } } },
   { type: "function", function: { name: "JiraReadTicket", description: "Read a Jira ticket by key (e.g. POW-123).", parameters: { type: "object", properties: { issueKey: { type: "string" } }, required: ["issueKey"] } } },
   { type: "function", function: { name: "JiraUpdateTicket", description: "Update fields on a Jira ticket.", parameters: { type: "object", properties: { issueKey: { type: "string" }, summary: { type: "string" }, description: { type: "string" }, priority: { type: "string" }, labels: { type: "array", items: { type: "string" } } }, required: ["issueKey"] } } },
+  { type: "function", function: { name: "JiraDeleteTicket", description: "Permanently delete a Jira ticket. IRREVERSIBLE — cannot be recovered. Only use when explicitly asked to delete, not to close or resolve.", parameters: { type: "object", properties: { issueKey: { type: "string", description: "The Jira issue key (e.g. POW-123, TECHOPS-456)" } }, required: ["issueKey"] } } },
   { type: "function", function: { name: "JiraSearch", description: "Search Jira using JQL.", parameters: { type: "object", properties: { jql: { type: "string" }, maxResults: { type: "number" } }, required: ["jql"] } } },
   { type: "function", function: { name: "JiraAddComment", description: "Add a comment to a Jira ticket.", parameters: { type: "object", properties: { issueKey: { type: "string" }, body: { type: "string" } }, required: ["issueKey", "body"] } } },
   { type: "function", function: { name: "JiraUpdateComment", description: "Update a comment on a Jira ticket.", parameters: { type: "object", properties: { issueKey: { type: "string" }, commentId: { type: "string" }, body: { type: "string" } }, required: ["issueKey", "commentId", "body"] } } },
@@ -223,7 +224,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
   // Jira
   if (name === "JiraCreateTicket") {
     try {
-      const result = await createJiraIssue({ summary: args.summary as string, description: args.description as string, issueType: args.issueType as string | undefined, labels: args.labels as string[] | undefined, priority: args.priority as string | undefined });
+      const result = await createJiraIssue({ summary: args.summary as string, description: args.description as string, issueType: args.issueType as string | undefined, labels: args.labels as string[] | undefined, priority: args.priority as string | undefined, projectKey: args.project as string | undefined });
       return `Created ${result.key}: ${result.url}`;
     } catch (err) { return `Error: ${err instanceof Error ? err.message : String(err)}`; }
   }
@@ -239,6 +240,12 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     try {
       const result = await updateJiraIssue(args.issueKey as string, { summary: args.summary as string | undefined, description: args.description as string | undefined, priority: args.priority as string | undefined, labels: args.labels as string[] | undefined });
       return `Updated ${result.key}: ${result.url}`;
+    } catch (err) { return `Error: ${err instanceof Error ? err.message : String(err)}`; }
+  }
+  if (name === "JiraDeleteTicket") {
+    try {
+      await deleteJiraIssue(args.issueKey as string);
+      return `Deleted ${args.issueKey}.`;
     } catch (err) { return `Error: ${err instanceof Error ? err.message : String(err)}`; }
   }
   if (name === "JiraSearch") {

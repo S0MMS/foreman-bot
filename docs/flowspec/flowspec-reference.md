@@ -12,7 +12,7 @@
 
 The dev posed a question to Delphi: *"What should an AI bot orchestration language look like?"* Six AI agents across Claude, Gemini, and GPT each independently proposed a design. A judge synthesized their answers. Workers critiqued the synthesis. The judge revised. After 3 rounds of adversarial debate, the output of that process became the FlowSpec specification.
 
-No human sat down with a blank spec document. The 12 primitives, the Turing completeness principle, the `ask` vs `send` distinction, the `means` operator, the `pause for approval` gate — all of it is what multiple leading AI models concluded, through the same Delphi process that FlowSpec is built to run, was the right design for a language that AI agents would use to orchestrate each other.
+No human sat down with a blank spec document. The 16 primitives, the Turing completeness principle, the `ask` vs `send` distinction, the `means` operator, the `pause for approval` gate — all of it is what multiple leading AI models concluded, through the same Delphi process that FlowSpec is built to run, was the right design for a language that AI agents would use to orchestrate each other.
 
 ---
 
@@ -48,7 +48,7 @@ This is what makes FlowSpec unusual. Most DSLs are designed around a specific ru
 
 ## Language Primitives
 
-14 primitives total.
+16 primitives total.
 
 | Primitive | Purpose |
 |-----------|---------|

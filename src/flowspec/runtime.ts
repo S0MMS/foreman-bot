@@ -53,6 +53,8 @@ function evaluateSingleCondition(vars: FlowVars, cond: Condition): boolean {
       return value.trim() !== '';
     case 'contains':
       return value.toLowerCase().includes((cond.value || '').toLowerCase());
+    case 'does not contain':
+      return !value.toLowerCase().includes((cond.value || '').toLowerCase());
     case 'equals':
       return value.trim() === (cond.value || '').trim();
     case 'is above':
