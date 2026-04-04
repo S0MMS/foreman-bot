@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import type { App } from '@slack/bolt';
 import { getState, setSessionId } from './session.js';
+import { MODEL_ALIASES, DEFAULT_MODEL } from './types.js';
 import { createCanvasMcpServer } from './mcp-canvas.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -70,6 +71,10 @@ async function runAgentSession(
     | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
     | { behavior: 'deny'; message: string }
   > => {
+    // Auto-approve everything if autoApprove is enabled
+    if (getState('ui:architect').autoApprove) {
+      return { behavior: 'allow', updatedInput: input };
+    }
     // Auto-approve read-only tools
     const baseName = toolName.replace(/^mcp__[^_]+__/, '');
     if (AUTO_APPROVE_TOOLS.has(toolName) || AUTO_APPROVE_TOOLS.has(baseName)) {
@@ -106,7 +111,7 @@ async function runAgentSession(
   const queryOptions: Parameters<typeof query>[0] = {
     prompt: userMessage,
     options: {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_ALIASES[getState('ui:architect').model] ?? getState('ui:architect').model ?? DEFAULT_MODEL,
       cwd: REPO_ROOT,
       abortController,
       settingSources: ['user', 'project'],
@@ -216,6 +221,11 @@ export async function handleArchitectConnection(ws: WebSocket, app?: App): Promi
         pending.resolve(msg.approved === true);
         pendingApprovals.delete(msg.toolId);
       }
+    }
+
+    if (msg.type === 'stop') {
+      abortController.abort();
+      send(ws, { type: 'done', content: '(stopped)' });
     }
   });
 

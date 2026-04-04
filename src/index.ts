@@ -45,7 +45,7 @@ loadSessions();
   const botUserId = auth.user_id as string;
   const botId = auth.bot_id as string;
   registerHandlers(app, botUserId, botId);
-  startWebhookServer();
+  startWebhookServer(undefined, app);
 
   // Start Temporal worker (graceful — won't crash Foreman if server is not running)
   startTemporalWorker().catch((err) => {

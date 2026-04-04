@@ -1,5 +1,9 @@
 import express from "express";
+import { createServer } from 'http';
+import { WebSocketServer } from 'ws';
 import { registerUiRoutes } from './ui-api.js';
+import { handleArchitectConnection } from './ui-claude.js';
+import type { App } from '@slack/bolt';
 
 const DEFAULT_PORT = 3001;
 
@@ -27,7 +31,7 @@ const dispatches = new Map<string, DispatchEntry>();
  * Pre-registers a dispatch before workers start, so the fan-in
  * knows how many completions to wait for.
  */
-export function startWebhookServer(port = DEFAULT_PORT): void {
+export function startWebhookServer(port = DEFAULT_PORT, slackApp?: App): void {
   const app = express();
   app.use(express.json());
 
@@ -106,7 +110,16 @@ export function startWebhookServer(port = DEFAULT_PORT): void {
     }
   });
 
-  app.listen(port, () => {
+  const server = createServer(app);
+
+  const wss = new WebSocketServer({ server, path: '/ws/architect' });
+  wss.on('connection', (ws) => {
+    handleArchitectConnection(ws, slackApp).catch((err) => {
+      console.error('[ws] Architect session error:', err instanceof Error ? err.message : err);
+    });
+  });
+
+  server.listen(port, () => {
     console.log(`  Webhook server: http://localhost:${port}`);
   });
 }

@@ -3,6 +3,8 @@ import { getAllBots, getRosterTree } from './bots.js';
 import { callBotByName } from './kafka.js';
 import { getCanvases, createCanvas, updateCanvas, deleteCanvas } from './canvases.js';
 import { setRosterOverride, addCustomFolder, removeCustomFolder } from './roster-overrides.js';
+import { getState, setModel, setName, setAutoApprove, clearSession } from './session.js';
+import { MODEL_ALIASES } from './types.js';
 
 // SSE clients: botName → Set of Response objects
 const sseClients = new Map<string, Set<Response>>();
@@ -113,5 +115,62 @@ export function registerUiRoutes(app: Application): void {
     if (!ok) { res.status(404).json({ error: 'Canvas not found' }); return; }
     pushUiEvent(req.params.botName, { type: 'canvas_deleted', canvasId: req.params.id });
     res.json({ ok: true });
+  });
+
+  // /cc session control commands for the UI Architect
+  app.post('/api/command', (req, res) => {
+    const { command } = req.body as { command: string };
+    if (!command) { res.status(400).json({ error: 'command required' }); return; }
+
+    const parts = command.replace(/^\/cc\s+/, '').trim().split(/\s+/);
+    const cmd = parts[0]?.toLowerCase();
+    const arg = parts.slice(1).join(' ');
+
+    const CHANNEL = 'ui:architect';
+
+    if (cmd === 'session') {
+      const s = getState(CHANNEL);
+      const response = [
+        `**Session: ui:architect**`,
+        `Model: ${s.model}`,
+        `Name: ${s.name ?? '(none)'}`,
+        `Auto-approve: ${s.autoApprove ? 'on' : 'off'}`,
+        `Session ID: ${s.sessionId ? s.sessionId.slice(0, 8) + '...' : '(none)'}`,
+      ].join('\n');
+      res.json({ response });
+      return;
+    }
+
+    if (cmd === 'model') {
+      if (!arg) { res.json({ response: `Current model: ${getState(CHANNEL).model}` }); return; }
+      const resolved = MODEL_ALIASES[arg] ?? arg;
+      setModel(CHANNEL, resolved);
+      res.json({ response: `Model set to: ${resolved}` });
+      return;
+    }
+
+    if (cmd === 'name') {
+      if (!arg) { res.json({ response: `Current name: ${getState(CHANNEL).name ?? '(none)'}` }); return; }
+      setName(CHANNEL, arg);
+      res.json({ response: `Name set to: ${arg}` });
+      return;
+    }
+
+    if (cmd === 'auto-approve') {
+      const on = arg === 'on';
+      const off = arg === 'off';
+      if (!on && !off) { res.json({ response: `Auto-approve is: ${getState(CHANNEL).autoApprove ? 'on' : 'off'}` }); return; }
+      setAutoApprove(CHANNEL, on);
+      res.json({ response: `Auto-approve: ${on ? 'on' : 'off'}` });
+      return;
+    }
+
+    if (cmd === 'new') {
+      clearSession(CHANNEL);
+      res.json({ response: 'Session cleared. Next message starts a fresh conversation.' });
+      return;
+    }
+
+    res.json({ response: `Unknown command: /cc ${cmd}\n\nAvailable: session, model, name, auto-approve, new, stop` });
   });
 }

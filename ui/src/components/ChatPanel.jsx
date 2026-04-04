@@ -1,7 +1,48 @@
 import { useState, useEffect, useRef } from 'react'
 import MessageBubble from './MessageBubble.jsx'
 
-export default function ChatPanel({ messages, isLoading, botName, onSend }) {
+// ── Tool Approval Card ─────────────────────────────────────────────────────────
+
+function ToolApprovalCard({ approval, onApprove }) {
+  return (
+    <div className="border border-yellow-600/50 bg-yellow-900/20 rounded-lg p-3 my-2 mx-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-yellow-400">🔧</span>
+        <span className="text-yellow-300 font-medium text-sm">{approval.name}</span>
+      </div>
+      <pre className="text-xs text-gray-300 bg-black/30 rounded p-2 mb-3 overflow-x-auto whitespace-pre-wrap">
+        {JSON.stringify(approval.input, null, 2)}
+      </pre>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onApprove(approval.toolId, true)}
+          className="px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white text-sm rounded-md transition-colors"
+        >
+          Approve
+        </button>
+        <button
+          onClick={() => onApprove(approval.toolId, false)}
+          className="px-3 py-1.5 bg-red-800 hover:bg-red-700 text-white text-sm rounded-md transition-colors"
+        >
+          Deny
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Message renderer — handles all message types ───────────────────────────────
+
+function MessageRow({ msg, onApprove }) {
+  if (msg.role === 'tool_approval') {
+    return <ToolApprovalCard approval={msg.approval} onApprove={onApprove} />
+  }
+  return <MessageBubble message={msg} />
+}
+
+// ── ChatPanel ──────────────────────────────────────────────────────────────────
+
+export default function ChatPanel({ messages, isLoading, botName, onSend, onApprove }) {
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
 
@@ -34,10 +75,14 @@ export default function ChatPanel({ messages, isLoading, botName, onSend }) {
             </p>
           </div>
         )}
-        {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
+        {messages.map(msg => (
+          <MessageRow key={msg.id} msg={msg} onApprove={onApprove} />
+        ))}
         {isLoading && (
           <div className="flex justify-start mb-4">
-            <div className="w-7 h-7 rounded-full bg-[#1f3050] flex items-center justify-center text-xs flex-shrink-0 mr-2 mt-0.5">🤖</div>
+            <div className="w-7 h-7 rounded-full bg-[#2d1f50] flex items-center justify-center text-xs flex-shrink-0 mr-2 mt-0.5">
+              {botName === 'architect' ? '⚡' : '🤖'}
+            </div>
             <div className="bg-[#21262d] rounded-2xl rounded-tl-sm px-4 py-2.5">
               <span className="text-[#8b949e] text-sm animate-pulse">●●●</span>
             </div>

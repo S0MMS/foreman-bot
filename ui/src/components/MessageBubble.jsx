@@ -1,12 +1,23 @@
 export default function MessageBubble({ message }) {
   const isUser = message.role === 'user'
   const isError = message.role === 'error'
+  const isSystem = message.role === 'system'
 
   if (isError) {
     return (
       <div className="flex justify-center my-2">
         <div className="bg-red-900/40 border border-red-700/50 text-red-300 text-sm rounded-lg px-4 py-2 max-w-lg">
           ⚠ {message.content}
+        </div>
+      </div>
+    )
+  }
+
+  if (isSystem) {
+    return (
+      <div className="flex justify-center my-2">
+        <div className="bg-[#1c2128] border border-[#30363d] text-[#8b949e] text-sm rounded-lg px-4 py-2 max-w-lg font-mono whitespace-pre-wrap">
+          {message.content}
         </div>
       </div>
     )

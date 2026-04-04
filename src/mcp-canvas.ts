@@ -270,8 +270,8 @@ export function createCanvasMcpServer(channelId: string, app: App) {
         "Use this when the user asks you to reboot yourself. The bot will post a confirmation message after restarting.",
         {},
         async () => {
-          // Only allow from DM channels
-          if (!channelId.startsWith("D")) {
+          // Only allow from DM channels or the UI Architect session
+          if (!channelId.startsWith("D") && channelId !== "ui:architect") {
             return { content: [{ type: "text" as const, text: "SelfReboot is only available from the DM channel." }] };
           }
 

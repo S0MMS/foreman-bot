@@ -2,6 +2,28 @@
 
 This file is automatically loaded by Claude Code when the working directory is set to this repo. It provides full architectural context for the Foreman Slack bridge.
 
+## Memory System
+
+All persistent memory (project status, protocols, user preferences) lives at:
+
+```
+/Users/chris.shreve/.claude/projects/-Users-chris-shreve/memory/
+```
+
+Read the index first:
+```
+/Users/chris.shreve/.claude/projects/-Users-chris-shreve/memory/MEMORY.md
+```
+
+Key files to know about:
+- `project_foreman_2.md` — Foreman 2.0 status, phases, what's been built
+- `dead_man_protocol.md` — mandatory self-modification safety protocol (also summarized below)
+- `docs/session-handoff.md` (in this repo) — what was happening in the last session
+
+When asked about ongoing projects, protocols, or context from previous conversations — read the memory files. Do not guess from CLAUDE.md alone.
+
+---
+
 ## What Foreman Is
 
 Foreman is a Slack bot that bridges AI agent sessions into Slack channels. Each Slack channel gets its own independent session with its own model, working directory, conversation history, and persona name. Users chat with AI agents from Slack; Foreman routes messages bidirectionally.
