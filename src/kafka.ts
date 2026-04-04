@@ -12,7 +12,7 @@
 
 import kafkajs, { type Producer, type Admin } from 'kafkajs';
 const { Kafka, logLevel, CompressionTypes, CompressionCodecs } = kafkajs;
-import { getAllTopics, getAllBots, type BotEntry, type SdkBot, type WebhookBot, type MockBot } from './bots.js';
+import { getAllTopics, getAllBots, getBot, type BotEntry, type SdkBot, type WebhookBot, type MockBot } from './bots.js';
 
 // Enable Snappy compression support (used by Redpanda Console by default)
 // @ts-ignore — kafkajs-snappy has no type declarations
@@ -192,6 +192,13 @@ async function callBot(entry: BotEntry, prompt: string): Promise<string> {
   }
 
   throw new Error(`Bot "${entry.name}" has unsupported type: ${definition.type}`);
+}
+
+/** Public wrapper — call a bot by name from bots.yaml. Stateless, no session history. */
+export async function callBotByName(botName: string, prompt: string): Promise<string> {
+  const entry = getBot(botName);
+  if (!entry) throw new Error(`Bot not found: ${botName}`);
+  return callBot(entry, prompt);
 }
 
 /**

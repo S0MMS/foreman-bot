@@ -1,4 +1,5 @@
 import express from "express";
+import { registerUiRoutes } from './ui-api.js';
 
 const DEFAULT_PORT = 3001;
 
@@ -29,6 +30,8 @@ const dispatches = new Map<string, DispatchEntry>();
 export function startWebhookServer(port = DEFAULT_PORT): void {
   const app = express();
   app.use(express.json());
+
+  registerUiRoutes(app);
 
   // Health check
   app.get("/health", (_req, res) => {
