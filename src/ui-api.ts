@@ -1,7 +1,8 @@
 import { type Application, type Response } from 'express';
-import { getAllBots } from './bots.js';
+import { getAllBots, getRosterTree } from './bots.js';
 import { callBotByName } from './kafka.js';
 import { getCanvases, createCanvas, updateCanvas, deleteCanvas } from './canvases.js';
+import { setRosterOverride, addCustomFolder, removeCustomFolder } from './roster-overrides.js';
 
 // SSE clients: botName → Set of Response objects
 const sseClients = new Map<string, Set<Response>>();
@@ -17,6 +18,35 @@ export function pushUiEvent(botName: string, event: object): void {
 }
 
 export function registerUiRoutes(app: Application): void {
+  // Roster tree for left nav
+  app.get('/api/roster', (_req, res) => {
+    res.json(getRosterTree());
+  });
+
+  // Create a new (possibly empty) folder
+  app.post('/api/roster/folders', (req, res) => {
+    const { folder } = req.body as { folder: string };
+    if (!folder || !folder.trim()) { res.status(400).json({ error: 'folder name required' }); return; }
+    addCustomFolder(folder.trim());
+    res.json({ ok: true, folder: folder.trim() });
+  });
+
+  // Delete a custom folder
+  app.delete('/api/roster/folders/*folderPath', (req, res) => {
+    const folderPath = (req.params.folderPath as unknown as string[]).join('/');
+    removeCustomFolder(folderPath);
+    res.json({ ok: true, folder: folderPath });
+  });
+
+  // Move a bot to a different folder (drag-and-drop)
+  app.patch('/api/roster/:botName', (req, res) => {
+    const { botName } = req.params;
+    const { folder } = req.body as { folder: string };
+    if (!folder) { res.status(400).json({ error: 'folder required' }); return; }
+    setRosterOverride(botName, folder);
+    res.json({ ok: true, botName, folder });
+  });
+
   // List all bots
   app.get('/api/bots', (_req, res) => {
     const bots = getAllBots().map(({ name, definition }) => ({

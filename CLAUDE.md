@@ -302,6 +302,53 @@ Write under `## Acceptance Criteria` using **Gherkin format** (mandatory):
 
 Each `Given`/`When`/`Then`/`And` must be on its own line, wrapped in backticks, with a blank line between each (Slack canvas API collapses single newlines).
 
+## Foreman 2.0 — Web UI (Primary Interface)
+
+The Foreman 2.0 UI is a React web app that replaces Slack as the primary interface for talking to the Architect (this session). **When Chris is talking to you interactively, he is using this UI — not Slack.**
+
+### Tech Stack
+
+| Layer | Tech | Details |
+|---|---|---|
+| Frontend | React + Vite | `ui/` directory, runs on port 5173 in dev |
+| Backend | Express | `src/webhook.ts`, port 3001 |
+| Architect transport | WebSocket | `/ws/architect` → `src/ui-claude.ts` → Claude Agent SDK |
+| Other bot transport | HTTP | `POST /api/chat` → `callBotByName()` via Kafka |
+| Real-time events | SSE | `GET /api/events?botName=` for canvas updates |
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `src/ui-claude.ts` | WebSocket handler for the Architect session — bridges Claude Agent SDK to the browser |
+| `src/ui-api.ts` | Express routes: `/api/roster`, `/api/bots`, `/api/chat`, `/api/canvas`, `/api/events` |
+| `ui/src/App.jsx` | Root React component — WS connection, message state, canvas state |
+| `ui/src/components/ChatPanel.jsx` | Message list, streaming, tool approval cards, input box |
+| `ui/src/components/LeftNav.jsx` | Bot roster tree with folders, drag-and-drop |
+| `ui/vite.config.js` | Vite dev server — proxies `/api` and `/ws` to port 3001 |
+
+### Architect session details
+
+- Channel ID for the Architect in this UI: **`ui:architect`**
+- Session is persisted to `~/.foreman/sessions.json` under key `ui:architect` — Architect remembers prior conversations across restarts
+- System prompt lives in `src/ui-claude.ts` (`ARCHITECT_SYSTEM_PROMPT`)
+- Tool approval: same `AUTO_APPROVE_TOOLS` set as Slack; non-auto tools surface as Approve/Deny cards in the chat
+
+### How to run
+
+```bash
+# Terminal 1 — Foreman server (backend + WS)
+npm run build && node dist/index.js
+
+# Terminal 2 — UI dev server
+cd ui && npm run dev
+# Opens http://localhost:5173
+```
+
+In production, Vite builds to `ui/dist/` and Express serves it statically.
+
+---
+
 ## Foreman 2.0 — Kafka/Redpanda Bot Transport
 
 Foreman 2.0 adds Kafka/Redpanda as a bot-to-bot communication layer alongside the existing Slack transport. **Slack continues to work exactly as today — no breaking changes.**
@@ -360,6 +407,49 @@ The Temporal worker starts automatically in `index.ts`. If the server isn't runn
 Key files: `src/temporal/workflows.ts`, `activities.ts`, `worker.ts`, `client.ts`
 
 **Important — nested session guard**: `index.ts` calls `delete process.env.CLAUDECODE` on startup. This prevents the Claude Code CLI's anti-nesting guard (added in v2.1.83) from rejecting sessions spawned by the Agent SDK. Without it, every bot session fails with "Claude Code cannot be launched inside another Claude Code session."
+
+## The Dead Man Protocol (Self-Modification Safety)
+
+Before modifying your own source code and rebooting, you MUST follow all 7 steps — no shortcuts, no skipping.
+
+### Step 1 — Pre-flight announcement
+State to the user: what files will change and why, plus `git log --oneline -3` to identify the last-known-good commit.
+
+### Step 2 — Make changes + build
+Make the code changes, run `npm run build`. If build fails, fix it. Do NOT proceed until build is clean.
+
+### Step 3 — Dead Man snapshot (NON-NEGOTIABLE)
+Update `~/.claude/projects/-Users-chris-shreve/memory/project_foreman_2.md` with:
+- Status: `⚠️ REBOOTING — if Foreman is down, read this`
+- Which files were changed + last-known-good commit hash
+- Exact rollback commands (copy-paste ready)
+
+### Step 4 — Write session handoff note
+Write to `docs/session-handoff.md`: what we were working on, decisions made, open questions, next steps.
+
+### Step 5 — Explicit user approval
+Ask: *"Build is clean, Dead Man is updated, handoff note written. Ready to reboot — shall I proceed?"*
+**Never call SelfReboot without the user saying yes.**
+
+### Step 6 — Reboot
+Call the `SelfReboot` tool. Wait for the ✅ confirmation.
+
+### Step 7 — Post-reboot verification
+- `curl http://localhost:3001/health`
+- Test the specific thing that changed
+- Update `project_foreman_2.md` status to `✅ HEALTHY` or `🔴 BROKEN`
+- Report results to user
+
+### Recovery (if Foreman is down after a reboot)
+```bash
+cat ~/.claude/projects/-Users-chris-shreve/memory/project_foreman_2.md
+cd /Users/chris.shreve/claude-slack-bridge
+git log --oneline -5
+git checkout <last-good-commit> -- <file1> <file2>
+npm run build
+```
+
+---
 
 ## Known Gotchas
 

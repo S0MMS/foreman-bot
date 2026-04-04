@@ -12,6 +12,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'yaml';
+import { getRosterOverrides, getCustomFolders } from './roster-overrides.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ export type SdkProvider = 'anthropic' | 'openai' | 'gemini';
 interface BotBase {
   type: BotType;
   system_prompt: string;
+  roster?: string;
 }
 
 export interface SdkBot extends BotBase {
@@ -172,4 +174,104 @@ export function botExists(name: string): boolean {
 /** Get all Kafka topic names across all bots. */
 export function getAllTopics(): string[] {
   return getAllBots().flatMap((b) => [b.inboxTopic, b.outboxTopic]);
+}
+
+// ── Roster Tree ────────────────────────────────────────────────────────────────
+
+export interface RosterNode {
+  id: string;
+  label: string;
+  type: 'folder' | 'bot';
+  botName?: string;       // only for type === 'bot'
+  botType?: string;       // sdk | mock | webhook etc
+  provider?: string | null;
+  children?: RosterNode[]; // only for type === 'folder'
+}
+
+/**
+ * Build a roster tree from the bot registry.
+ * - Bots with a `roster` field are placed into folders based on slash-delimited path segments.
+ * - Bots without a `roster` field go into a "GENERAL" folder.
+ * - The tree is purely recursive with no hardcoded depth limit.
+ */
+export function getRosterTree(): RosterNode[] {
+  const bots = getAllBots();
+  const overrides = getRosterOverrides();
+  const customFolders = getCustomFolders();
+
+  // folder map: folder id path (e.g. "TECHOPS/Batch-1") → child nodes
+  const folderMap = new Map<string, RosterNode[]>();
+
+  // Seed custom (possibly empty) folders first
+  for (const folderPath of customFolders) {
+    const segments = folderPath.split('/').filter(Boolean);
+    for (let i = 1; i <= segments.length; i++) {
+      const key = segments.slice(0, i).join('/');
+      if (!folderMap.has(key)) folderMap.set(key, []);
+    }
+  }
+
+  function ensureFolder(pathSegments: string[]): RosterNode[] {
+    const key = pathSegments.join('/');
+    if (!folderMap.has(key)) {
+      folderMap.set(key, []);
+    }
+    return folderMap.get(key)!;
+  }
+
+  function insertBot(pathSegments: string[], botNode: RosterNode): void {
+    // Ensure all ancestor folders exist
+    for (let i = 1; i <= pathSegments.length; i++) {
+      ensureFolder(pathSegments.slice(0, i));
+    }
+    // Insert the bot into the deepest folder
+    ensureFolder(pathSegments).push(botNode);
+  }
+
+  for (const bot of bots) {
+    const rosterPath = overrides[bot.name] ?? ((bot.definition as any).roster as string | undefined);
+    const segments = rosterPath ? rosterPath.split('/').filter(Boolean) : ['GENERAL'];
+
+    const botNode: RosterNode = {
+      id: `bot:${bot.name}`,
+      label: bot.name,
+      type: 'bot',
+      botName: bot.name,
+      botType: bot.definition.type,
+      provider: (bot.definition as any).provider ?? null,
+    };
+
+    insertBot(segments, botNode);
+  }
+
+  function buildFolderNode(pathSegments: string[]): RosterNode {
+    const key = pathSegments.join('/');
+    const label = pathSegments[pathSegments.length - 1];
+    const directChildren = folderMap.get(key) ?? [];
+
+    // Find sub-folders: keys that are exactly one level deeper than this path
+    const subFolderNodes: RosterNode[] = [];
+    for (const [k] of folderMap) {
+      const parts = k.split('/');
+      if (parts.length === pathSegments.length + 1 &&
+          parts.slice(0, pathSegments.length).join('/') === key) {
+        subFolderNodes.push(buildFolderNode(parts));
+      }
+    }
+
+    return {
+      id: `folder:${key}`,
+      label,
+      type: 'folder',
+      children: [...subFolderNodes, ...directChildren],
+    };
+  }
+
+  // Find top-level folder keys (segments of length 1)
+  const topLevelKeys = new Set<string>();
+  for (const [k] of folderMap) {
+    topLevelKeys.add(k.split('/')[0]);
+  }
+
+  return Array.from(topLevelKeys).map((key) => buildFolderNode([key]));
 }
