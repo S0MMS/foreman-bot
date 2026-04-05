@@ -55,6 +55,7 @@ export default function App() {
               role: 'assistant',
               content: streamBufRef.current,
               streaming: true,
+              ts: Date.now(),
             }
             return { ...prev, architect: [...msgs, newMsg] }
           }
@@ -71,7 +72,7 @@ export default function App() {
           const last = msgs[msgs.length - 1]
           const finalized = last && last.streaming
             ? { ...last, content: finalContent, streaming: false }
-            : { id: `done-${Date.now()}`, role: 'assistant', content: finalContent }
+            : { id: `done-${Date.now()}`, role: 'assistant', content: finalContent, ts: Date.now() }
           const updated = last && last.streaming ? [...msgs.slice(0, -1), finalized] : [...msgs, finalized]
           if (msg.turns != null) {
             const statsMsg = {
@@ -132,7 +133,7 @@ export default function App() {
 
       if (msg.type === 'error') {
         streamBufRef.current = ''
-        const errMsg = { id: `err-${Date.now()}`, role: 'error', content: msg.content }
+        const errMsg = { id: `err-${Date.now()}`, role: 'error', content: msg.content, ts: Date.now() }
         setMessagesByBot(prev => ({
           ...prev,
           architect: [...(prev['architect'] ?? []), errMsg],
@@ -205,7 +206,7 @@ export default function App() {
   async function sendMessage(text) {
     if (!activeBotName || isLoading) return
 
-    const userMsg = { id: Date.now().toString(), role: 'user', content: text }
+    const userMsg = { id: Date.now().toString(), role: 'user', content: text, ts: Date.now() }
     setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), userMsg] }))
 
     // /f commands — session controls for the UI (equivalent to /cc in Slack)
@@ -217,7 +218,7 @@ export default function App() {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'stop' }))
         }
-        const sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: 'Stop signal sent.' }
+        const sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: 'Stop signal sent.', ts: Date.now() }
         setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), sysMsg] }))
         return
       }
@@ -229,10 +230,10 @@ export default function App() {
           body: JSON.stringify({ command: text.replace(/^\/f\s+/, '/cc ') })
         })
         const data = await res.json()
-        const sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: data.response ?? data.error ?? 'No response' }
+        const sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: data.response ?? data.error ?? 'No response', ts: Date.now() }
         setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), sysMsg] }))
       } catch (err) {
-        const errMsg = { id: `err-${Date.now()}`, role: 'error', content: err.message }
+        const errMsg = { id: `err-${Date.now()}`, role: 'error', content: err.message, ts: Date.now() }
         setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), errMsg] }))
       }
       return
@@ -247,7 +248,7 @@ export default function App() {
       // Wait briefly for connection if needed
       const ws = wsRef.current
       if (!ws) {
-        const errMsg = { id: (Date.now() + 1).toString(), role: 'error', content: 'WebSocket not connected' }
+        const errMsg = { id: (Date.now() + 1).toString(), role: 'error', content: 'WebSocket not connected', ts: Date.now() }
         setMessagesByBot(prev => ({ ...prev, architect: [...(prev['architect'] ?? []), errMsg] }))
         setIsLoading(false)
         return
@@ -258,7 +259,7 @@ export default function App() {
         } else if (ws.readyState === WebSocket.CONNECTING) {
           ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'message', content: text })), { once: true })
         } else {
-          const errMsg = { id: (Date.now() + 1).toString(), role: 'error', content: 'WebSocket not ready' }
+          const errMsg = { id: (Date.now() + 1).toString(), role: 'error', content: 'WebSocket not ready', ts: Date.now() }
           setMessagesByBot(prev => ({ ...prev, architect: [...(prev['architect'] ?? []), errMsg] }))
           setIsLoading(false)
         }
@@ -275,10 +276,10 @@ export default function App() {
         body: JSON.stringify({ botName: activeBotName, message: text })
       })
       const data = await res.json()
-      const botMsg = { id: (Date.now() + 1).toString(), role: 'assistant', content: data.response ?? data.error ?? 'No response' }
+      const botMsg = { id: (Date.now() + 1).toString(), role: 'assistant', content: data.response ?? data.error ?? 'No response', ts: Date.now() }
       setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), botMsg] }))
     } catch (err) {
-      const errMsg = { id: (Date.now() + 1).toString(), role: 'error', content: err.message }
+      const errMsg = { id: (Date.now() + 1).toString(), role: 'error', content: err.message, ts: Date.now() }
       setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), errMsg] }))
     } finally {
       setIsLoading(false)
