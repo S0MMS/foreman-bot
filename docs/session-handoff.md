@@ -1,25 +1,28 @@
-# Session Handoff — 2026-04-04 (reboot 4 — PreToolUse hook fix)
+# Session Handoff — 2026-04-04 (reboot 5 — stats footer)
 
 ## What we were working on
-Debugging why `tool_progress` WS events are not appearing in the Foreman UI chat.
+Adding a cost/stats footer to the Foreman UI, matching the Slack experience.
 
-## Root cause found
-`~/.claude/settings.local.json` pre-approves Bash, Read, Edit, Write, Glob, Grep etc. at the settings level. The SDK sees these and bypasses `canUseTool` entirely — that's why debug logs never appeared. `canUseTool` is only called for tools NOT already in the settings allow list.
+## What was built
+- `src/ui-claude.ts` — `done` WS event now includes `cost`, `turns`, `elapsedSec`
+- `ui/src/App.jsx` — appends a `stats` role message after finalizing the assistant response
+- `ui/src/components/MessageBubble.jsx` — renders `stats` as small italic right-aligned text
 
-## Fix applied
-Switched from `canUseTool` to `hooks: { PreToolUse: [...] }` in `src/ui-claude.ts`. PreToolUse hooks fire regardless of settings-level approval — same mechanism the Slack adapter uses for progress. Using wildcard matcher `'.*'` to catch all tools.
+## Expected result
+After each response, a footer appears like:
+_Done in 2 turns | $0.0234 | 8s_
 
 ## Next steps after reboot
 1. `curl http://localhost:3001/health`
-2. Ask Architect in the UI to read a file — should see italic progress lines
-3. If tool name shows as 'unknown', switch to explicit per-tool hooks (same as buildProgressHooks in AnthropicAdapter.ts)
+2. Ask Architect anything in the UI — stats footer should appear after the response
+3. Commit + push
 
 ## Last known good commit
-`8936468`
+`4c4ea5e` feat: Foreman UI — tool progress visibility
 
 ## Rollback
 ```bash
 cd /Users/chris.shreve/claude-slack-bridge
-git checkout 8936468 -- src/ui-claude.ts
+git checkout 4c4ea5e -- src/ui-claude.ts ui/src/App.jsx ui/src/components/MessageBubble.jsx
 npm run build
 ```

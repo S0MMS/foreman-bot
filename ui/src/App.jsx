@@ -69,13 +69,19 @@ export default function App() {
         setMessagesByBot(prev => {
           const msgs = prev['architect'] ?? []
           const last = msgs[msgs.length - 1]
-          if (last && last.streaming) {
-            const finalized = { ...last, content: finalContent, streaming: false }
-            return { ...prev, architect: [...msgs.slice(0, -1), finalized] }
+          const finalized = last && last.streaming
+            ? { ...last, content: finalContent, streaming: false }
+            : { id: `done-${Date.now()}`, role: 'assistant', content: finalContent }
+          const updated = last && last.streaming ? [...msgs.slice(0, -1), finalized] : [...msgs, finalized]
+          if (msg.turns != null) {
+            const statsMsg = {
+              id: `stats-${Date.now()}`,
+              role: 'stats',
+              content: `Done in ${msg.turns} turn${msg.turns !== 1 ? 's' : ''} | $${Number(msg.cost).toFixed(4)} | ${msg.elapsedSec}s`,
+            }
+            return { ...prev, architect: [...updated, statsMsg] }
           }
-          // No streaming message found — add as plain message
-          const doneMsg = { id: `done-${Date.now()}`, role: 'assistant', content: finalContent }
-          return { ...prev, architect: [...msgs, doneMsg] }
+          return { ...prev, architect: updated }
         })
         setIsLoading(false)
         return

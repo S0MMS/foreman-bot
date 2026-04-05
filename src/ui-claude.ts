@@ -166,6 +166,7 @@ async function runAgentSession(
   }
 
   const q = query(queryOptions);
+  const startTime = Date.now();
 
   try {
     for await (const message of q) {
@@ -194,7 +195,16 @@ async function runAgentSession(
 
       if (message.type === 'result') {
         if (message.subtype === 'success') {
-          send(ws, { type: 'done', content: message.result });
+          const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
+          const cost = message.total_cost_usd ?? 0;
+          const turns = message.num_turns ?? 0;
+          send(ws, {
+            type: 'done',
+            content: message.result,
+            cost,
+            turns,
+            elapsedSec,
+          });
         } else {
           send(ws, {
             type: 'error',
