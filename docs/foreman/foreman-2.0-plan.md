@@ -49,16 +49,16 @@ Key exported functions from `src/bots.ts`:
 
 **Tasks:**
 - [x] `dispatchToBotInbox(botInboxName, prompt)` added to `activities.ts` — Kafka-native dispatch, does NOT touch Slack transport
-- [ ] Kafka consumer loop in Foreman — one consumer per bot in `bots.yaml`
-- [ ] Each consumer: reads from `{name}.inbox` → calls correct SDK adapter → produces to `{name}.outbox`
-- [ ] Per-bot mutex → Kafka consumer group semantics
+- [x] Kafka consumer loop in Foreman — one consumer per bot in `bots.yaml`
+- [x] Each consumer: reads from `{name}.inbox` → calls correct SDK adapter → produces to `{name}.outbox`
+- [x] Per-bot mutex → Kafka consumer group semantics
 
 **Key design decision:** `dispatchToBot()` is **unchanged**. A new parallel function `dispatchToBotInbox(botInboxName, prompt)` handles Kafka dispatch explicitly. Callers opt in — no regression risk.
 
 - `dispatchToBot(channelId, prompt)` — direct SDK call, Slack transport, today's behavior
 - `dispatchToBotInbox("betty.inbox", prompt)` — produces to Kafka inbox, awaits `correlationId` on outbox
 
-**Done when:** A Temporal workflow can call `dispatchToBotInbox("betty.inbox", prompt)` and receive a response. Slack still works in parallel — no regression.
+**STATUS: COMPLETE ✅** — `startBotConsumers()` running. One KafkaJS consumer per bot. Snappy compression supported via `kafkajs-snappy`. Foreman healthy as of 2026-04-03.
 
 ---
 

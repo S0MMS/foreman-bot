@@ -81,6 +81,19 @@ export default function App() {
         return
       }
 
+      if (msg.type === 'tool_progress') {
+        const progressMsg = {
+          id: `progress-${Date.now()}-${Math.random()}`,
+          role: 'tool_progress',
+          content: msg.content,
+        }
+        setMessagesByBot(prev => ({
+          ...prev,
+          architect: [...(prev['architect'] ?? []), progressMsg],
+        }))
+        return
+      }
+
       if (msg.type === 'tool_approval') {
         // Insert a pending approval card into messages
         const approvalMsg = {

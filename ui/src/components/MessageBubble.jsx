@@ -2,6 +2,7 @@ export default function MessageBubble({ message }) {
   const isUser = message.role === 'user'
   const isError = message.role === 'error'
   const isSystem = message.role === 'system'
+  const isToolProgress = message.role === 'tool_progress'
 
   if (isError) {
     return (
@@ -9,6 +10,14 @@ export default function MessageBubble({ message }) {
         <div className="bg-red-900/40 border border-red-700/50 text-red-300 text-sm rounded-lg px-4 py-2 max-w-lg">
           ⚠ {message.content}
         </div>
+      </div>
+    )
+  }
+
+  if (isToolProgress) {
+    return (
+      <div className="flex justify-start my-0.5 pl-9">
+        <span className="text-xs italic text-[#484f58]">{message.content}</span>
       </div>
     )
   }

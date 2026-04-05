@@ -47,6 +47,22 @@ function send(ws: WebSocket, event: object): void {
   }
 }
 
+/** Format a short human-readable label for a tool invocation */
+function formatProgress(toolName: string, input: Record<string, unknown>): string {
+  const baseName = toolName.replace(/^mcp__[^_]+__/, '');
+  switch (baseName) {
+    case 'Read':       return `Reading \`${input.file_path}\`...`;
+    case 'Glob':       return `Searching for \`${input.pattern}\`...`;
+    case 'Grep':       return `Searching code for \`${input.pattern}\`...`;
+    case 'WebSearch':  return `Searching the web: \`${input.query}\`...`;
+    case 'WebFetch':   return `Fetching \`${input.url}\`...`;
+    case 'Bash':       return `Bash: \`${String(input.command ?? '').slice(0, 80)}\`...`;
+    case 'Write':      return `Writing \`${input.file_path}\`...`;
+    case 'Edit':       return `Editing \`${input.file_path}\`...`;
+    default:           return `${baseName}...`;
+  }
+}
+
 const ARCHITECT_SYSTEM_PROMPT =
   'You are Foreman, the Architect — the orchestrating intelligence of the Foreman multi-agent system. ' +
   'You have full Claude Code capabilities: file system access, bash execution, web fetch, and more. ' +
@@ -94,6 +110,7 @@ async function runAgentSession(
       pendingApprovals.set(toolId, {
         resolve: (approved: boolean) => {
           if (approved) {
+            send(ws, { type: 'tool_progress', content: formatProgress(toolName, input) });
             resolve({ behavior: 'allow', updatedInput: input });
           } else {
             resolve({ behavior: 'deny', message: 'User denied this action via Foreman UI' });
@@ -121,6 +138,21 @@ async function runAgentSession(
         append: ARCHITECT_SYSTEM_PROMPT,
       },
       canUseTool,
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: '.*',
+            hooks: [
+              async (input: any) => {
+                const toolName = input?.tool_name ?? input?.name ?? 'unknown';
+                const toolInput = input?.tool_input ?? input?.input ?? {};
+                send(ws, { type: 'tool_progress', content: formatProgress(toolName, toolInput) });
+                return {};
+              },
+            ],
+          },
+        ],
+      },
       ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
       stderr: (data: string) => {
         console.error('[architect ws] stderr:', data);

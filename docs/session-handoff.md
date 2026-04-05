@@ -1,39 +1,25 @@
-# Session Handoff — 2026-04-04
+# Session Handoff — 2026-04-04 (reboot 4 — PreToolUse hook fix)
 
 ## What we were working on
-Adding `/f` session control commands to the Foreman UI chat input.
+Debugging why `tool_progress` WS events are not appearing in the Foreman UI chat.
 
-## What was built
-- `src/ui-api.ts` — `POST /api/command` handles: session, model, name, auto-approve, new
-- `src/ui-claude.ts` — model read from session state; autoApprove flag checked; handles `stop` WS message
-- `ui/src/App.jsx` — `/f` prefix intercepted before sending to agent; `/f stop` sends WS stop signal; others POST to `/api/command`
-- `ui/src/components/MessageBubble.jsx` — `system` role renders as monospace gray centered box
-- `CLAUDE.md` — memory system path + Dead Man Protocol documented
-- `src/mcp-canvas.ts` — SelfReboot allowed from `ui:architect`
+## Root cause found
+`~/.claude/settings.local.json` pre-approves Bash, Read, Edit, Write, Glob, Grep etc. at the settings level. The SDK sees these and bypasses `canUseTool` entirely — that's why debug logs never appeared. `canUseTool` is only called for tools NOT already in the settings allow list.
 
-## Commands available in the UI
-- `/f session` — show current model, name, auto-approve, sessionId
-- `/f model <name>` — change model (supports aliases: sonnet, opus, haiku)
-- `/f name <name>` — change Architect name
-- `/f auto-approve on|off` — toggle tool auto-approval
-- `/f new` — clear session (fresh conversation next message)
-- `/f stop` — abort current running query
-
-## Why we rebooted
-`/api/command` route was returning HTML 404 — old process running without new code.
+## Fix applied
+Switched from `canUseTool` to `hooks: { PreToolUse: [...] }` in `src/ui-claude.ts`. PreToolUse hooks fire regardless of settings-level approval — same mechanism the Slack adapter uses for progress. Using wildcard matcher `'.*'` to catch all tools.
 
 ## Next steps after reboot
 1. `curl http://localhost:3001/health`
-2. Try `/f session` in the UI — should return a gray system message with session info
-3. User mentioned a second UI tweak (not yet revealed)
-4. Need to commit + push all Phase 3 work
+2. Ask Architect in the UI to read a file — should see italic progress lines
+3. If tool name shows as 'unknown', switch to explicit per-tool hooks (same as buildProgressHooks in AnthropicAdapter.ts)
 
 ## Last known good commit
-`f84646b` feat: Foreman 2.0 Phase 3 — Foreman UI foundation
+`8936468`
 
 ## Rollback
 ```bash
 cd /Users/chris.shreve/claude-slack-bridge
-git checkout f84646b -- src/ui-api.ts src/ui-claude.ts src/mcp-canvas.ts
+git checkout 8936468 -- src/ui-claude.ts
 npm run build
 ```
