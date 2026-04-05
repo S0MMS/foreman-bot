@@ -66,7 +66,7 @@ export default function MessageBubble({ message }) {
               : 'bg-[#21262d] text-[#e6edf3] rounded-tl-sm'
             }`}
         >
-          {message.content}
+          {(message.content || '').trim()}
         </div>
         {isUser && (
           <div className="w-7 h-7 rounded-full bg-[#2d333b] flex items-center justify-center text-xs flex-shrink-0 ml-2 mt-0.5">
