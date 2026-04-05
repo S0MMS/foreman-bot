@@ -84,6 +84,13 @@ Key exported functions from `src/bots.ts`:
 
 ---
 
+## Phase 4 — UI Polish (not started)
+
+**Tasks:**
+- [ ] Mobile-friendly layout — hide/collapse LeftNav sidebar on small screens, hamburger menu to reveal it
+
+---
+
 ## What Is NOT in 2.0
 
 - AgentCore integration — deferred
