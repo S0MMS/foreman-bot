@@ -16,6 +16,10 @@ export default function App() {
   const wsRef = useRef(null)
   // Buffer for streaming assistant tokens from Architect
   const streamBufRef = useRef('')
+  // Auto-reconnect state
+  const reconnectTimerRef = useRef(null)
+  const reconnectAttemptRef = useRef(0)
+  const wasConnectedRef = useRef(false)
 
   // ── WebSocket for Architect ──────────────────────────────────────────────────
 
@@ -28,6 +32,26 @@ export default function App() {
 
     ws.onopen = () => {
       console.log('[ws] Architect connected')
+      // Clear any pending reconnect timer
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      // If this is a REconnect (not the first connect), show a system message
+      if (wasConnectedRef.current) {
+        const sysMsg = {
+          id: `sys-reboot-${Date.now()}`,
+          role: 'system',
+          content: '✅ Reboot successful — back online!',
+          ts: Date.now(),
+        }
+        setMessagesByBot(prev => ({
+          ...prev,
+          architect: [...(prev['architect'] ?? []), sysMsg],
+        }))
+      }
+      wasConnectedRef.current = true
+      reconnectAttemptRef.current = 0
     }
 
     ws.onmessage = (evt) => {
@@ -145,9 +169,17 @@ export default function App() {
     }
 
     ws.onclose = () => {
-      console.log('[ws] Architect disconnected — will reconnect on next message')
       wsRef.current = null
       setIsLoading(false)
+      // Auto-reconnect with exponential backoff (1s, 2s, 4s, 8s, max 15s)
+      const attempt = reconnectAttemptRef.current
+      const delay = Math.min(1000 * Math.pow(2, attempt), 15000)
+      console.log(`[ws] Architect disconnected — reconnecting in ${delay / 1000}s (attempt ${attempt + 1})`)
+      reconnectAttemptRef.current = attempt + 1
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null
+        connectArchitectWs()
+      }, delay)
     }
 
     ws.onerror = (err) => {
@@ -155,10 +187,16 @@ export default function App() {
     }
   }, [])
 
-  // Open WS when Architect is active
+  // Open WS when Architect is active + cleanup reconnect timer on unmount
   useEffect(() => {
     if (activeBotName === 'architect') {
       connectArchitectWs()
+    }
+    return () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
     }
   }, [activeBotName, connectArchitectWs])
 
