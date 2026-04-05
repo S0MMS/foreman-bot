@@ -5,6 +5,7 @@ import { getCanvases, createCanvas, updateCanvas, deleteCanvas } from './canvase
 import { setRosterOverride, addCustomFolder, removeCustomFolder } from './roster-overrides.js';
 import { getState, setModel, setName, setAutoApprove, clearSession } from './session.js';
 import { MODEL_ALIASES } from './types.js';
+import { getAllBotStatuses, onBotStatusChange } from './bot-status.js';
 
 // SSE clients: botName → Set of Response objects
 const sseClients = new Map<string, Set<Response>>();
@@ -47,6 +48,33 @@ export function registerUiRoutes(app: Application): void {
     if (!folder) { res.status(400).json({ error: 'folder required' }); return; }
     setRosterOverride(botName, folder);
     res.json({ ok: true, botName, folder });
+  });
+
+  // Bot statuses (snapshot)
+  app.get('/api/bots/status', (_req, res) => {
+    res.json(getAllBotStatuses());
+  });
+
+  // SSE stream for bot status changes — browser subscribes once
+  app.get('/api/bots/status/stream', (_req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Send current snapshot immediately
+    const snapshot = getAllBotStatuses();
+    res.write(`data: ${JSON.stringify({ type: 'snapshot', statuses: snapshot })}\n\n`);
+
+    const unsubscribe = onBotStatusChange((botName, status) => {
+      try { res.write(`data: ${JSON.stringify({ type: 'status_change', botName, status })}\n\n`); } catch { /* client gone */ }
+    });
+
+    const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30000);
+    res.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
   });
 
   // List all bots

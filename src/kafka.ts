@@ -13,6 +13,7 @@
 import kafkajs, { type Producer, type Admin } from 'kafkajs';
 const { Kafka, logLevel, CompressionTypes, CompressionCodecs } = kafkajs;
 import { getAllTopics, getAllBots, getBot, type BotEntry, type SdkBot, type WebhookBot, type MockBot } from './bots.js';
+import { setBotStatus } from './bot-status.js';
 
 // Enable Snappy compression support (used by Redpanda Console by default)
 // @ts-ignore — kafkajs-snappy has no type declarations
@@ -225,6 +226,7 @@ export async function startBotConsumers(): Promise<void> {
     try {
       await consumer.connect();
       await consumer.subscribe({ topic: bot.inboxTopic, fromBeginning: false });
+      setBotStatus(bot.name, 'online');
 
       consumer.run({
         eachMessage: async ({ message }) => {
@@ -242,6 +244,7 @@ export async function startBotConsumers(): Promise<void> {
               return;
             }
 
+            setBotStatus(bot.name, 'busy');
             console.log(`[kafka] ${bot.name}: processing message ${correlationId.slice(0, 8)}...`);
             const result = await callBot(bot, prompt);
 
@@ -258,17 +261,21 @@ export async function startBotConsumers(): Promise<void> {
               }],
             });
 
+            setBotStatus(bot.name, 'online');
             console.log(`[kafka] ${bot.name}: response sent to ${bot.outboxTopic}`);
           } catch (err: any) {
+            setBotStatus(bot.name, 'online');
             console.error(`[kafka] ${bot.name} failed (correlationId=${correlationId}):`, err.message);
           }
         },
       }).catch((err: any) => {
+        setBotStatus(bot.name, 'offline');
         console.error(`[kafka] Consumer loop for ${bot.name} crashed:`, err.message);
       });
 
       console.log(`[kafka] Consumer ready: ${bot.inboxTopic}`);
     } catch (err: any) {
+      setBotStatus(bot.name, 'offline');
       // Non-fatal — one bot failure doesn't stop the others
       console.warn(`[kafka] Failed to start consumer for ${bot.name}:`, err.message);
     }

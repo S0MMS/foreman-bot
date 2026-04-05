@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 
-const TYPE_ICON = { sdk: '🤖', mock: '🧪', webhook: '🔗', human: '👤' }
+const STATUS_DOT = {
+  online:  'bg-green-500',
+  busy:    'bg-yellow-500',
+  offline: 'bg-gray-600',
+}
 
 // ── Bot leaf item ──────────────────────────────────────────────────────────────
 
-function BotItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDragEnd }) {
+function BotItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDragEnd, status }) {
   const isActive = activeBotName === node.botName
+  const dotColor = STATUS_DOT[status] ?? STATUS_DOT.offline
   return (
     <button
       draggable
@@ -23,7 +28,7 @@ function BotItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDragE
           : 'text-[#8b949e] hover:bg-[#21262d] hover:text-[#e6edf3]'
         }`}
     >
-      <span className="flex-shrink-0">{TYPE_ICON[node.botType] ?? '🤖'}</span>
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} title={status ?? 'offline'} />
       <span className="truncate">{node.label}</span>
     </button>
   )
@@ -31,7 +36,7 @@ function BotItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDragE
 
 // ── Folder item (collapsible, drop target) ─────────────────────────────────────
 
-function FolderItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDragEnd, dragOverFolder, setDragOverFolder, dragCounterRef, onDropOnFolder, onDeleteFolder }) {
+function FolderItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDragEnd, dragOverFolder, setDragOverFolder, dragCounterRef, onDropOnFolder, onDeleteFolder, botStatuses }) {
   const [open, setOpen] = useState(true)
   const isOver = dragOverFolder === node.id
   const isEmpty = (node.children ?? []).length === 0
@@ -98,6 +103,7 @@ function FolderItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDr
               dragCounterRef={dragCounterRef}
               onDropOnFolder={onDropOnFolder}
               onDeleteFolder={onDeleteFolder}
+              botStatuses={botStatuses}
             />
           ))}
         </div>
@@ -108,16 +114,16 @@ function FolderItem({ node, activeBotName, onSelectBot, depth, onDragStart, onDr
 
 // ── Recursive RosterNode dispatcher ───────────────────────────────────────────
 
-function RosterNode({ node, activeBotName, onSelectBot, depth = 0, onDragStart, onDragEnd, dragOverFolder, setDragOverFolder, dragCounterRef, onDropOnFolder, onDeleteFolder }) {
+function RosterNode({ node, activeBotName, onSelectBot, depth = 0, onDragStart, onDragEnd, dragOverFolder, setDragOverFolder, dragCounterRef, onDropOnFolder, onDeleteFolder, botStatuses }) {
   if (node.type === 'bot') {
-    return <BotItem node={node} activeBotName={activeBotName} onSelectBot={onSelectBot} depth={depth} onDragStart={onDragStart} onDragEnd={onDragEnd} />
+    return <BotItem node={node} activeBotName={activeBotName} onSelectBot={onSelectBot} depth={depth} onDragStart={onDragStart} onDragEnd={onDragEnd} status={botStatuses?.[node.botName]} />
   }
-  return <FolderItem node={node} activeBotName={activeBotName} onSelectBot={onSelectBot} depth={depth} onDragStart={onDragStart} onDragEnd={onDragEnd} dragOverFolder={dragOverFolder} setDragOverFolder={setDragOverFolder} dragCounterRef={dragCounterRef} onDropOnFolder={onDropOnFolder} onDeleteFolder={onDeleteFolder} />
+  return <FolderItem node={node} activeBotName={activeBotName} onSelectBot={onSelectBot} depth={depth} onDragStart={onDragStart} onDragEnd={onDragEnd} dragOverFolder={dragOverFolder} setDragOverFolder={setDragOverFolder} dragCounterRef={dragCounterRef} onDropOnFolder={onDropOnFolder} onDeleteFolder={onDeleteFolder} botStatuses={botStatuses} />
 }
 
 // ── LeftNav root ───────────────────────────────────────────────────────────────
 
-export default function LeftNav({ activeBotName, onSelectBot }) {
+export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
   const [rosterTree, setRosterTree] = useState([])
   const [dragOverFolder, setDragOverFolder] = useState(null)
   const dragCounterRef = useRef({})
@@ -232,6 +238,7 @@ export default function LeftNav({ activeBotName, onSelectBot }) {
             dragCounterRef={dragCounterRef}
             onDropOnFolder={handleDropOnFolder}
             onDeleteFolder={handleDeleteFolder}
+            botStatuses={botStatuses}
           />
         ))}
       </nav>

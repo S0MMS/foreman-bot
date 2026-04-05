@@ -10,6 +10,7 @@ export default function App() {
   const [canvasesByBot, setCanvasesByBot] = useState({})
   const [activeTabByBot, setActiveTabByBot] = useState({})
   const [isLoading, setIsLoading] = useState(false)
+  const [botStatuses, setBotStatuses] = useState({})
 
   // WebSocket ref for Architect sessions
   const wsRef = useRef(null)
@@ -197,6 +198,21 @@ export default function App() {
     return () => es.close()
   }, [activeBotName])
 
+  // ── Bot status SSE ──────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const es = new EventSource('/api/bots/status/stream')
+    es.onmessage = (e) => {
+      const event = JSON.parse(e.data)
+      if (event.type === 'snapshot') {
+        setBotStatuses(event.statuses)
+      } else if (event.type === 'status_change') {
+        setBotStatuses(prev => ({ ...prev, [event.botName]: event.status }))
+      }
+    }
+    return () => es.close()
+  }, [])
+
   const activeTab = activeBotName ? (activeTabByBot[activeBotName] ?? 'chat') : 'chat'
   const messages = activeBotName ? (messagesByBot[activeBotName] ?? []) : []
   const canvases = activeBotName ? (canvasesByBot[activeBotName] ?? []) : []
@@ -334,7 +350,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <LeftNav activeBotName={activeBotName} onSelectBot={(name) => setActiveBotName(name)} />
+      <LeftNav activeBotName={activeBotName} onSelectBot={(name) => setActiveBotName(name)} botStatuses={botStatuses} />
       <div className="flex flex-col flex-1 min-w-0 border-l border-[#30363d]">
         <TabBar
           canvases={activeBotName === 'architect' ? [] : canvases}
