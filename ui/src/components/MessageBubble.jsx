@@ -53,14 +53,14 @@ export default function MessageBubble({ message }) {
       {time && (
         <span className={`text-[10px] text-[#484f58] mb-0.5 ${isUser ? 'mr-9' : 'ml-9'}`}>{time}</span>
       )}
-      <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
         {!isUser && (
           <div className="w-7 h-7 rounded-full bg-[#1f3050] flex items-center justify-center text-xs flex-shrink-0 mr-2 mt-0.5">
             🤖
           </div>
         )}
         <div
-          className={`max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words
+          className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words
             ${isUser
               ? 'bg-[#1f3050] text-[#e6edf3] rounded-tr-sm'
               : 'bg-[#21262d] text-[#e6edf3] rounded-tl-sm'
