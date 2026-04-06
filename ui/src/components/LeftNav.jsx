@@ -232,7 +232,7 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
 
       {/* Architect section */}
       <div className="px-3 pt-3 pb-1">
-        <span className="text-[#8b949e] text-xs uppercase tracking-wider font-medium">Architect</span>
+        <span className="text-[#8b949e] text-xs uppercase tracking-wider font-medium">System</span>
       </div>
       <div className="px-2">
         <button
@@ -244,7 +244,21 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
             }`}
         >
           <span>⚡</span>
-          <span className="truncate font-medium">Foreman</span>
+          <span className="truncate font-medium">Architect</span>
+        </button>
+        <button
+          onClick={() => window.open('http://localhost:8080', 'redpanda-console')}
+          className="w-full text-left px-3 py-1.5 rounded-md text-sm mb-0.5 flex items-center gap-2 text-[#8b949e] hover:bg-[#21262d] hover:text-[#e6edf3] transition-colors"
+        >
+          <span className="text-xs">↗</span>
+          <span className="truncate">Redpanda Console</span>
+        </button>
+        <button
+          onClick={() => window.open('http://localhost:8233', 'temporal-console')}
+          className="w-full text-left px-3 py-1.5 rounded-md text-sm mb-0.5 flex items-center gap-2 text-[#8b949e] hover:bg-[#21262d] hover:text-[#e6edf3] transition-colors"
+        >
+          <span className="text-xs">↗</span>
+          <span className="truncate">Temporal Console</span>
         </button>
       </div>
 
