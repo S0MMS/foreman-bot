@@ -176,6 +176,48 @@ FlowSpec files within a workspace reference bots by short name (`worker-1`). For
 
 Rendering is a switch on file extension. No complex rendering engine.
 
+### Parity with Claude Code Terminal
+
+- Agent SDK sessions already load user MCPs via `settingSources: ['user', 'project']` — confirmed in `src/ui-claude.ts`
+- [ ] `/compact` equivalent — no SDK support yet, investigate when needed
+- Goal: new devs should feel "this is just Claude Code with a better UI", not "this is a different thing"
+
+### `/f session` — Tool Visibility by Source
+
+Tools should be grouped by source so devs can see exactly what's available and where it came from:
+```
+🔧 Session Tools
+
+Claude Code Built-in (12)
+  Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch...
+
+Foreman Toolbelt (28)
+  Canvas: Append, Create, Read, Delete, FindSection...
+  Jira: CreateTicket, ReadTicket, Search, Transition...
+  GitHub: CreatePR, ListPRs, ReadIssue, Search...
+  Slack: PostMessage, ReadChannel
+  System: SelfReboot, GetCurrentChannel, LaunchApp...
+
+Atlassian Cloud MCP (28)
+  Jira: createIssue, editIssue, getIssue, searchUsingJql...
+  Confluence: createPage, getPage, updatePage, search...
+
+Slack Cloud MCP (12)
+  read_channel, send_message, search_channels...
+```
+
+Grouping is free — MCP tool names encode their source: `mcp__foreman-toolbelt__CanvasRead` → source: `foreman-toolbelt`. Parse the double-underscore prefix.
+
+**Two implementation approaches:**
+
+**Approach 1 — Static config inspection (simple, 2/5):**
+Backend reads `~/.claude/mcp-needs-auth-cache.json` to list cloud MCPs that have been authed, plus lists MCPs it explicitly injects (foreman-toolbelt). Shows tools that *should* be active. Free, instant, no API cost.
+
+**Approach 2 — Runtime introspection (thorough, 3/5):**
+Add a `SessionInfo` tool to `foreman-toolbelt` that the Architect can call to list its own tools. When `/f session` is invoked, triggers a quick AI query to enumerate the full tool list. Costs one API call but gives the complete, accurate picture.
+
+**Decision:** Start with Approach 1. Add Approach 2 later if devs need the full picture.
+
 ### Other Phase 4 Tasks
 
 - [ ] Mobile-friendly layout — hide/collapse LeftNav sidebar on small screens, hamburger menu to reveal it
