@@ -203,6 +203,31 @@ export default function App() {
   // Load canvases when bot changes (skip for architect)
   useEffect(() => {
     if (!activeBotName || activeBotName === 'architect') return
+
+    // Workspace bots — load files from workspace directory as canvases
+    if (activeBotName.includes('/')) {
+      const slug = activeBotName.split('/')[0]
+      fetch(`/api/workspaces/${slug}/files`)
+        .then(r => r.json())
+        .then(files => {
+          const extToType = { '.md': 'markdown', '.flow': 'code', '.yaml': 'code', '.yml': 'code', '.txt': 'markdown', '.mmd': 'mermaid', '.csv': 'csv', '.json': 'code' }
+          // Fetch content for each file
+          return Promise.all(files.map(f =>
+            fetch(`/api/workspaces/${slug}/files/${f.name}`)
+              .then(r => r.json())
+              .then(data => ({
+                id: `ws:${slug}:${f.name}`,
+                title: f.name,
+                type: extToType[f.ext] ?? 'code',
+                content: data.content ?? '',
+              }))
+          ))
+        })
+        .then(canvases => setCanvasesByBot(prev => ({ ...prev, [activeBotName]: canvases })))
+        .catch(console.error)
+      return
+    }
+
     fetch(`/api/canvas/${activeBotName}`)
       .then(r => r.json())
       .then(canvases => setCanvasesByBot(prev => ({ ...prev, [activeBotName]: canvases })))
@@ -409,6 +434,7 @@ export default function App() {
           onSelectTab={(id) => setActiveTabByBot(prev => ({ ...prev, [activeBotName]: id }))}
           onAddCanvas={addCanvas}
           onCloseCanvas={closeCanvas}
+          readOnly={activeBotName?.includes('/')}
         />
         <div className="flex-1 overflow-hidden">
           {activeTab === 'chat'
