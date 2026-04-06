@@ -1,4 +1,7 @@
 import { type Application, type Response } from 'express';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { getAllBots, getRosterTree } from './bots.js';
 import { callBotByName } from './kafka.js';
 import { getCanvases, createCanvas, updateCanvas, deleteCanvas } from './canvases.js';
@@ -6,6 +9,39 @@ import { setRosterOverride, addCustomFolder, removeCustomFolder } from './roster
 import { getState, setModel, setName, setAutoApprove, clearSession } from './session.js';
 import { MODEL_ALIASES } from './types.js';
 import { getAllBotStatuses, onBotStatusChange } from './bot-status.js';
+
+/** Build a grouped tool/MCP summary for /f session */
+/** Build structured tool data for /f session */
+function getToolData(): {
+  builtins: string[];
+  foreman: Record<string, string[]>;
+  cloudMcps: string[];
+} {
+  const builtins = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Agent', 'Skill', 'TodoWrite', 'NotebookEdit'];
+
+  const foreman: Record<string, string[]> = {
+    Canvas: ['Append', 'Create', 'Delete', 'DeleteElementById', 'FindSection', 'List', 'Read', 'ReadById', 'UpdateElementById'],
+    Jira: ['AddComment', 'AssignTicket', 'CreateTicket', 'DeleteComment', 'DeleteTicket', 'GetFieldOptions', 'GetTransitions', 'ReadTicket', 'Search', 'SetField', 'TransitionTicket', 'UpdateComment', 'UpdateTicket'],
+    Confluence: ['CreatePage', 'ReadPage', 'Search', 'UpdatePage'],
+    GitHub: ['CreatePR', 'ListPRs', 'ReadIssue', 'ReadPR', 'Search'],
+    Slack: ['PostMessage', 'ReadChannel'],
+    Diagram: ['Create'],
+    System: ['GetCurrentChannel', 'LaunchApp', 'SelfReboot', 'TriggerBitrise'],
+  };
+
+  let cloudMcps: string[] = [];
+  try {
+    const cachePath = join(homedir(), '.claude', 'mcp-needs-auth-cache.json');
+    const cache = JSON.parse(readFileSync(cachePath, 'utf-8'));
+    cloudMcps = Object.keys(cache)
+      .filter(k => k.startsWith('claude.ai '))
+      .map(k => k.replace('claude.ai ', ''));
+  } catch {
+    // No cache file
+  }
+
+  return { builtins, foreman, cloudMcps };
+}
 
 // SSE clients: botName → Set of Response objects
 const sseClients = new Map<string, Set<Response>>();
@@ -158,14 +194,18 @@ export function registerUiRoutes(app: Application): void {
 
     if (cmd === 'session') {
       const s = getState(CHANNEL);
-      const response = [
-        `**Session: ui:architect**`,
-        `Model: ${s.model}`,
-        `Name: ${s.name ?? '(none)'}`,
-        `Auto-approve: ${s.autoApprove ? 'on' : 'off'}`,
-        `Session ID: ${s.sessionId ? s.sessionId.slice(0, 8) + '...' : '(none)'}`,
-      ].join('\n');
-      res.json({ response });
+      res.json({
+        type: 'session_info',
+        session: {
+          channel: CHANNEL,
+          model: s.model,
+          name: s.name ?? null,
+          cwd: s.cwd,
+          autoApprove: s.autoApprove,
+          sessionId: s.sessionId ? s.sessionId.slice(0, 8) + '...' : null,
+        },
+        tools: getToolData(),
+      });
       return;
     }
 

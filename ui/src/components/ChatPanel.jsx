@@ -31,11 +31,65 @@ function ToolApprovalCard({ approval, onApprove }) {
   )
 }
 
+// ── Session Info Card ─────────────────────────────────────────────────────────
+
+function SessionInfoCard({ data }) {
+  const { session, tools } = data
+  const foremanTotal = Object.values(tools.foreman).reduce((sum, arr) => sum + arr.length, 0)
+
+  return (
+    <div className="border border-[#30363d] bg-[#161b22] rounded-lg p-4 my-2 mx-4 font-mono text-xs">
+      {/* Session info */}
+      <div className="text-[#58a6ff] font-medium mb-2">Session</div>
+      <div className="text-[#8b949e] ml-2 space-y-0.5">
+        <div>Model:        <span className="text-[#e6edf3]">{session.model}</span></div>
+        <div>Name:         <span className="text-[#e6edf3]">{session.name ?? '(none)'}</span></div>
+        <div>CWD:          <span className="text-[#e6edf3]">{session.cwd}</span></div>
+        <div>Auto-approve: <span className="text-[#e6edf3]">{session.autoApprove ? 'on' : 'off'}</span></div>
+        <div>Session ID:   <span className="text-[#e6edf3]">{session.sessionId ?? '(none)'}</span></div>
+      </div>
+
+      <div className="border-t border-[#30363d] my-3" />
+
+      {/* Tools */}
+      <div className="text-[#58a6ff] font-medium mb-2">Available Tools</div>
+
+      {/* Claude Code built-in */}
+      <div className="ml-2 mb-2">
+        <div className="text-[#f0883e]">Claude Code Built-in ({tools.builtins.length})</div>
+        <div className="text-[#e6edf3] ml-3">{tools.builtins.join(', ')}</div>
+      </div>
+
+      {/* Foreman Toolbelt */}
+      <div className="ml-2 mb-2">
+        <div className="text-[#f0883e]">Foreman Toolbelt ({foremanTotal})</div>
+        {Object.entries(tools.foreman).map(([group, items]) => (
+          <div key={group} className="ml-3 mt-1">
+            <div className="text-[#7ee787]">{group}</div>
+            <div className="text-[#e6edf3] ml-3">{items.join(', ')}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Cloud MCPs */}
+      {tools.cloudMcps.length > 0 && (
+        <div className="ml-2">
+          <div className="text-[#f0883e]">Cloud MCPs ({tools.cloudMcps.length})</div>
+          <div className="text-[#e6edf3] ml-3">{tools.cloudMcps.join(', ')}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Message renderer — handles all message types ───────────────────────────────
 
 function MessageRow({ msg, onApprove }) {
   if (msg.role === 'tool_approval') {
     return <ToolApprovalCard approval={msg.approval} onApprove={onApprove} />
+  }
+  if (msg.role === 'session_info') {
+    return <SessionInfoCard data={msg.sessionInfo} />
   }
   return <MessageBubble message={msg} />
 }

@@ -284,7 +284,12 @@ export default function App() {
           body: JSON.stringify({ command: text.replace(/^\/f\s+/, '/cc ') })
         })
         const data = await res.json()
-        const sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: data.response ?? data.error ?? 'No response', ts: Date.now() }
+        let sysMsg
+        if (data.type === 'session_info') {
+          sysMsg = { id: `sys-${Date.now()}`, role: 'session_info', sessionInfo: data, ts: Date.now() }
+        } else {
+          sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: data.response ?? data.error ?? 'No response', ts: Date.now() }
+        }
         setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), sysMsg] }))
       } catch (err) {
         const errMsg = { id: `err-${Date.now()}`, role: 'error', content: err.message, ts: Date.now() }

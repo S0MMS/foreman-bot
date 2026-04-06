@@ -220,6 +220,7 @@ Add a `SessionInfo` tool to `foreman-toolbelt` that the Architect can call to li
 
 ### Other Phase 4 Tasks
 
+- [ ] Image attachment in chat — drag-and-drop or file picker to attach screenshots/images to messages. Architect can read images via the Agent SDK.
 - [ ] Mobile-friendly layout — hide/collapse LeftNav sidebar on small screens, hamburger menu to reveal it
 - [ ] Open source LLM support — Ollama adapter for running local models (Llama 3, Mistral, etc.) as bots in `bots.yaml`
 - [ ] Dockerize Temporal — add Temporal to `docker-compose.yml` with a profile so `docker compose --profile full up` starts Redpanda + Temporal together
