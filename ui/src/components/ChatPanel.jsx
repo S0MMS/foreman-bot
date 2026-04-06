@@ -45,10 +45,18 @@ function MessageRow({ msg, onApprove }) {
 export default function ChatPanel({ messages, isLoading, botName, onSend, onApprove }) {
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
+  const inputRef = useRef(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
+
+  // Re-focus input when loading finishes (so user can keep typing immediately)
+  useEffect(() => {
+    if (!isLoading) {
+      inputRef.current?.focus()
+    }
+  }, [isLoading])
 
   function handleSend() {
     const text = input.trim()
@@ -95,6 +103,7 @@ export default function ChatPanel({ messages, isLoading, botName, onSend, onAppr
       <div className="px-4 pb-4 pt-2 border-t border-[#30363d]">
         <div className="flex gap-2 items-end">
           <textarea
+            ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
