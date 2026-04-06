@@ -84,10 +84,104 @@ Key exported functions from `src/bots.ts`:
 
 ---
 
-## Phase 4 — UI Polish (not started)
+## Phase 4 — UI Polish & Workspaces (not started)
 
-**Tasks:**
+### LeftNav Three-Section Model
+
+The LeftNav will contain three distinct sections:
+
+**Section 1 — Architect + Infrastructure**
+- Foreman Architect (pinned at top, as today)
+- Redpanda Console — clicking shows the console embedded in the right panel via iframe (no frame-blocking headers, confirmed working)
+- Temporal Console — opens in new tab (sends `X-Frame-Options: SAMEORIGIN`, blocks iframe from different port). Future: proxy through Express to enable embedding.
+
+**Section 2 — Bots**
+- Flat list of available/unassigned bots (betty, clive, gpt-worker, etc.)
+- Always visible — acts as the "talent pool"
+- Bots can be dragged into workspaces (moves them out of this section)
+
+**Section 3 — Workspaces**
+- Task-oriented containers (like a Jira ticket or project folder)
+- Each workspace has: assigned bots + shared canvases (files on disk)
+- Create workspaces in the UI; drag bots in from Section 2
+- Can also create new bots directly within a workspace
+
+### Workspace Design
+
+**Workspace = directory on disk.** Each workspace is a subdirectory (e.g. `workspaces/techops-2187/`) containing all artifacts:
+```
+workspaces/techops-2187/
+  workspace.yaml        ← metadata: assigned bots, display name
+  links.md              ← canvas: Important Links
+  ideas.md              ← canvas: Ideas & Notes
+  techops-2187.flow     ← canvas: FlowSpec Workflow
+  architecture.mmd      ← canvas: Mermaid Diagram
+```
+
+**Directory naming: slugs** (same pattern as GitHub repos, npm packages, Docker, Kubernetes).
+- User enters display name: "TECHOPS-2187: Burger View Feature"
+- Slug generated once: `techops-2187-burger-view-feature` → becomes the directory name, never changes
+- Display name stored in `workspace.yaml`, can be changed anytime
+- Slugify rules: lowercase, alphanumeric + hyphens only, no spaces, no special characters
+```js
+function slugify(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+```
+
+**Workspace-scoped bots:** A workspace can define its own bots in `workspace.yaml` using the same schema as `bots.yaml`:
+```yaml
+name: "Pythia: Multi-Bot Verification"
+bots:
+  - name: pythia-worker-1
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: "You are a research analyst..."
+  - name: pythia-judge
+    type: sdk
+    provider: anthropic
+    model: claude-opus-4-6
+    system_prompt: "You are a judge synthesizing..."
+```
+Two kinds of bots: **global** (`bots.yaml`, available everywhere) and **workspace** (`workspace.yaml`, scoped to that workspace). Workspace bots spin up on-demand when the workspace is opened, tear down when closed.
+
+**Bot namespacing:** The workspace slug acts as a namespace to prevent collisions. Two workspaces can both define a bot named `worker-1` without conflict:
+```
+Workspace: pythia (slug)
+  Bot: worker-1  → internally: pythia/worker-1
+  Kafka topics:  pythia.worker-1.inbox, pythia.worker-1.outbox
+
+Workspace: code-review (slug)
+  Bot: worker-1  → internally: code-review/worker-1
+  Kafka topics:  code-review.worker-1.inbox, code-review.worker-1.outbox
+```
+FlowSpec files within a workspace reference bots by short name (`worker-1`). Foreman resolves to the namespaced version (`pythia/worker-1`) based on the active workspace context. Same pattern used by Docker Compose (project prefix) and Kubernetes (namespaces).
+
+**Key design decisions:**
+- Canvases belong to the **workspace**, not to individual bots. All bots in the workspace share the same files.
+- A bot assigned to a workspace gets its `cwd` set to the workspace directory.
+- A bot can only be in **one workspace at a time** (keep it simple; revisit if needed).
+- Dragging a bot back out of a workspace returns it to the unassigned pool.
+- Tab bar shows files in the workspace directory as canvases.
+- Backend: `GET /api/workspace/:name/files` does `fs.readdir()`, `GET /api/workspace/:name/files/:filename` does `fs.readFile()`.
+
+**Canvas rendering (dead simple, complexity target: 2/5):**
+| File type | Renderer |
+|---|---|
+| `.md` | `react-markdown` (1 npm install, 2 lines of code) |
+| `.flow`, `.yaml`, `.txt` | Raw text in `<pre>` block |
+| `.mmd` (Mermaid) | `mermaid` npm package → SVG (add later) |
+| `.png`, `.jpg` | `<img>` tag pointing to backend file endpoint |
+
+Rendering is a switch on file extension. No complex rendering engine.
+
+### Other Phase 4 Tasks
+
 - [ ] Mobile-friendly layout — hide/collapse LeftNav sidebar on small screens, hamburger menu to reveal it
+- [ ] Open source LLM support — Ollama adapter for running local models (Llama 3, Mistral, etc.) as bots in `bots.yaml`
+- [ ] Dockerize Temporal — add Temporal to `docker-compose.yml` with a profile so `docker compose --profile full up` starts Redpanda + Temporal together
+- [ ] Dockerize everything — single `docker compose up` for full Foreman stack (for distribution to other developers)
 
 ---
 
