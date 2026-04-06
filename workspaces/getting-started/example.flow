@@ -1,0 +1,7 @@
+workflow: hello-world
+description: A simple example workflow that asks a bot to introduce itself
+
+steps:
+  - name: introduce
+    bot: helper
+    prompt: "Please introduce yourself and explain what you can do in this workspace."

@@ -1,0 +1,8 @@
+name: "Getting Started with Foreman"
+description: "A starter workspace to learn how Foreman workspaces work"
+bots:
+  - name: helper
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: "You are a helpful assistant inside the Getting Started workspace. Help the user learn how Foreman works."

@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { getAllBots, getRosterTree } from './bots.js';
+import { listWorkspaces, getWorkspace, listWorkspaceFiles, readWorkspaceFile, createWorkspace } from './workspaces.js';
 import { callBotByName } from './kafka.js';
 import { getCanvases, createCanvas, updateCanvas, deleteCanvas } from './canvases.js';
 import { setRosterOverride, addCustomFolder, removeCustomFolder } from './roster-overrides.js';
@@ -240,5 +241,39 @@ export function registerUiRoutes(app: Application): void {
     }
 
     res.json({ response: `Unknown command: /cc ${cmd}\n\nAvailable: session, model, name, auto-approve, new, stop` });
+  });
+
+  // ── Workspace API ───────────────────────────────────────────────────────────
+
+  // List all workspaces
+  app.get('/api/workspaces', (_req, res) => {
+    res.json(listWorkspaces());
+  });
+
+  // Create a new workspace
+  app.post('/api/workspaces', (req, res) => {
+    const { name, description } = req.body as { name: string; description?: string };
+    if (!name) { res.status(400).json({ error: 'name required' }); return; }
+    const workspace = createWorkspace(name, description);
+    res.json(workspace);
+  });
+
+  // Get a single workspace
+  app.get('/api/workspaces/:slug', (req, res) => {
+    const workspace = getWorkspace(req.params.slug);
+    if (!workspace) { res.status(404).json({ error: 'Workspace not found' }); return; }
+    res.json(workspace);
+  });
+
+  // List files in a workspace
+  app.get('/api/workspaces/:slug/files', (req, res) => {
+    res.json(listWorkspaceFiles(req.params.slug));
+  });
+
+  // Read a workspace file
+  app.get('/api/workspaces/:slug/files/:filename', (req, res) => {
+    const content = readWorkspaceFile(req.params.slug, req.params.filename);
+    if (content === null) { res.status(404).json({ error: 'File not found' }); return; }
+    res.json({ name: req.params.filename, content });
   });
 }
