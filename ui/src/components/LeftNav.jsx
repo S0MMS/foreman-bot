@@ -125,6 +125,8 @@ function RosterNode({ node, activeBotName, onSelectBot, depth = 0, onDragStart, 
 
 export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
   const [rosterTree, setRosterTree] = useState([])
+  const [workspaces, setWorkspaces] = useState([])
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState({})
   const [dragOverFolder, setDragOverFolder] = useState(null)
   const dragCounterRef = useRef({})
 
@@ -135,7 +137,14 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
       .catch(console.error)
   }
 
-  useEffect(() => { fetchRoster() }, [])
+  function fetchWorkspaces() {
+    fetch('/api/workspaces')
+      .then(r => r.json())
+      .then(setWorkspaces)
+      .catch(console.error)
+  }
+
+  useEffect(() => { fetchRoster(); fetchWorkspaces() }, [])
 
   function handleDragStart(botName) {
     // intentionally empty — dataTransfer set in BotItem
@@ -223,7 +232,7 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
           title="New folder"
         >+</button>
       </div>
-      <nav className="flex-1 overflow-y-auto px-2 pb-4">
+      <nav className="overflow-y-auto px-2 pb-2">
         {rosterTree.map(node => (
           <RosterNode
             key={node.id}
@@ -241,6 +250,61 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
             botStatuses={botStatuses}
           />
         ))}
+      </nav>
+
+      {/* Divider */}
+      <div className="mx-3 my-2 border-t border-[#30363d]" />
+
+      {/* Workspaces section */}
+      <div className="px-3 pb-1">
+        <span className="text-[#8b949e] text-xs uppercase tracking-wider font-medium">Workspaces</span>
+      </div>
+      <nav className="flex-1 overflow-y-auto px-2 pb-4">
+        {workspaces.map(ws => {
+          const isExpanded = expandedWorkspaces[ws.slug] ?? false
+          return (
+            <div key={ws.slug}>
+              <button
+                onClick={() => setExpandedWorkspaces(prev => ({ ...prev, [ws.slug]: !prev[ws.slug] }))}
+                className="w-full text-left py-1.5 px-2 rounded-md text-sm flex items-center gap-1.5 text-[#8b949e] hover:bg-[#21262d] hover:text-[#e6edf3] transition-colors group"
+              >
+                <span className="text-xs flex-shrink-0 transition-transform" style={{ display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                <span className="truncate">{ws.name}</span>
+                {ws.bots.length > 0 && (
+                  <span className="ml-auto text-[#484f58] text-xs">{ws.bots.length}</span>
+                )}
+              </button>
+              {isExpanded && (
+                <div className="ml-2">
+                  {ws.bots.length === 0 && (
+                    <p className="text-[#484f58] text-xs py-1 px-4 italic">No bots</p>
+                  )}
+                  {ws.bots.map(bot => {
+                    const botId = `${ws.slug}/${bot.name}`
+                    const isActive = activeBotName === botId
+                    return (
+                      <button
+                        key={bot.name}
+                        onClick={() => onSelectBot(botId)}
+                        className={`w-full text-left py-1.5 pl-6 pr-3 rounded-md text-sm mb-0.5 flex items-center gap-2 transition-colors
+                          ${isActive
+                            ? 'bg-[#1f3050] text-[#58a6ff]'
+                            : 'text-[#8b949e] hover:bg-[#21262d] hover:text-[#e6edf3]'
+                          }`}
+                      >
+                        <span className="w-2 h-2 rounded-full flex-shrink-0 bg-gray-600" />
+                        <span className="truncate">{bot.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
+        {workspaces.length === 0 && (
+          <p className="text-[#484f58] text-xs py-1 px-2 italic">No workspaces</p>
+        )}
       </nav>
     </div>
   )
