@@ -100,10 +100,14 @@ export default function ChatPanel({ messages, isLoading, botName, onSend, onAppr
   const [input, setInput] = useState('')
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
+  const prevBotRef = useRef(botName)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+    // Jump instantly when switching bots; smooth-scroll for new messages
+    const switched = prevBotRef.current !== botName
+    prevBotRef.current = botName
+    bottomRef.current?.scrollIntoView({ behavior: switched ? 'instant' : 'smooth' })
+  }, [messages, isLoading, botName])
 
   // Re-focus input when loading finishes (so user can keep typing immediately)
   useEffect(() => {
