@@ -124,21 +124,38 @@ export async function disconnectKafka(): Promise<void> {
   kafka = null;
 }
 
+// ── Bot Session History ───────────────────────────────────────────────────────
+// Per-bot conversation history. Transport-agnostic — Kafka is just a pipe,
+// the bot's session state lives here.
+
+interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+const botSessions = new Map<string, ChatMessage[]>();
+
+/** Get or create a conversation history for a bot. */
+function getHistory(botName: string): ChatMessage[] {
+  if (!botSessions.has(botName)) botSessions.set(botName, []);
+  return botSessions.get(botName)!;
+}
+
 // ── Bot Consumer Loop ─────────────────────────────────────────────────────────
 
 /**
- * Call a bot's LLM directly — stateless, no session history.
- * Each inbox message is processed independently with the bot's system_prompt.
+ * Call a bot's LLM with full conversation history.
+ * Each bot maintains a session — messages accumulate across calls.
  */
 async function callBot(entry: BotEntry, prompt: string): Promise<string> {
   const { definition } = entry;
 
-  // Mock bot — return canned response
+  // Mock bot — return canned response (stateless by design)
   if (definition.type === 'mock') {
     return (definition as MockBot).response;
   }
 
-  // Webhook bot — HTTP POST to external endpoint
+  // Webhook bot — HTTP POST to external endpoint (stateless — no session)
   if (definition.type === 'webhook') {
     const bot = definition as WebhookBot;
     const res = await fetch(bot.url, {
@@ -151,9 +168,15 @@ async function callBot(entry: BotEntry, prompt: string): Promise<string> {
     return data.result ?? data.response ?? data.text ?? JSON.stringify(data);
   }
 
-  // SDK bots — direct LLM API call
+  // SDK bots — LLM API call with full conversation history
   if (definition.type === 'sdk') {
     const bot = definition as SdkBot;
+    const history = getHistory(entry.name);
+
+    // Append the new user message
+    history.push({ role: 'user', content: prompt });
+
+    let response = '';
 
     if (bot.provider === 'anthropic') {
       const Anthropic = (await import('@anthropic-ai/sdk')).default;
@@ -162,35 +185,44 @@ async function callBot(entry: BotEntry, prompt: string): Promise<string> {
         model: bot.model,
         max_tokens: 8096,
         system: bot.system_prompt,
-        messages: [{ role: 'user', content: prompt }],
+        messages: history.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       });
       const block = msg.content[0];
-      return block.type === 'text' ? block.text : '';
-    }
-
-    if (bot.provider === 'openai') {
+      response = block.type === 'text' ? block.text : '';
+    } else if (bot.provider === 'openai') {
       const { default: OpenAI } = await import('openai');
       const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
       const completion = await client.chat.completions.create({
         model: bot.model,
         messages: [
           { role: 'system', content: bot.system_prompt },
-          { role: 'user', content: prompt },
+          ...history,
         ],
       });
-      return completion.choices[0]?.message?.content ?? '';
-    }
-
-    if (bot.provider === 'gemini') {
+      response = completion.choices[0]?.message?.content ?? '';
+    } else if (bot.provider === 'gemini') {
       const { GoogleGenerativeAI } = await import('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '');
       const model = genAI.getGenerativeModel({
         model: bot.model,
         systemInstruction: bot.system_prompt,
       });
-      const result = await model.generateContent(prompt);
-      return result.response.text();
+      // Gemini uses a different history format — build from our messages
+      const chat = model.startChat({
+        history: history.slice(0, -1).map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        })),
+      });
+      const result = await chat.sendMessage(prompt);
+      response = result.response.text();
+    } else {
+      throw new Error(`Bot "${entry.name}" has unsupported provider: ${bot.provider}`);
     }
+
+    // Append the assistant response to history
+    history.push({ role: 'assistant', content: response });
+    return response;
   }
 
   throw new Error(`Bot "${entry.name}" has unsupported type: ${definition.type}`);
