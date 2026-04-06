@@ -13,6 +13,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'yaml';
 import { getRosterOverrides, getCustomFolders } from './roster-overrides.js';
+import { listWorkspaces } from './workspaces.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -174,6 +175,45 @@ export function botExists(name: string): boolean {
 /** Get all Kafka topic names across all bots. */
 export function getAllTopics(): string[] {
   return getAllBots().flatMap((b) => [b.inboxTopic, b.outboxTopic]);
+}
+
+/**
+ * Register workspace bots into the global bot registry.
+ * Each workspace bot is namespaced as "slug/botname" with matching Kafka topics.
+ * Call this at startup after loadBotRegistry().
+ */
+export function registerWorkspaceBots(): void {
+  const reg = getBotRegistry();
+  const workspaces = listWorkspaces();
+  let count = 0;
+
+  for (const ws of workspaces) {
+    for (const bot of ws.bots) {
+      const namespacedName = `${ws.slug}/${bot.name}`;
+
+      // Skip if already registered (e.g. after hot reload)
+      if (reg.has(namespacedName)) continue;
+
+      const definition: BotDefinition = validate(namespacedName, {
+        type: bot.type ?? 'sdk',
+        provider: bot.provider ?? 'anthropic',
+        model: bot.model ?? 'claude-sonnet-4-6',
+        system_prompt: bot.system_prompt ?? `You are ${bot.name}, a bot in the ${ws.name} workspace.`,
+      });
+
+      reg.set(namespacedName, {
+        name: namespacedName,
+        definition,
+        inboxTopic: `${namespacedName}.inbox`,
+        outboxTopic: `${namespacedName}.outbox`,
+      });
+      count++;
+    }
+  }
+
+  if (count > 0) {
+    console.log(`[bots] Registered ${count} workspace bot(s): ${[...reg.keys()].filter(k => k.includes('/')).join(', ')}`);
+  }
 }
 
 // ── Roster Tree ────────────────────────────────────────────────────────────────

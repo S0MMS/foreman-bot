@@ -19,7 +19,7 @@ import { startSession, resumeSession } from "./claude.js";
 import { getState } from "./session.js";
 import { startWebhookServer } from "./webhook.js";
 import { startTemporalWorker } from "./temporal/worker.js";
-import { loadBotRegistry } from "./bots.js";
+import { loadBotRegistry, registerWorkspaceBots } from "./bots.js";
 import { ensureBotTopics, startBotConsumers } from "./kafka.js";
 
 // Prevent "nested session" detection when the Agent SDK spawns Claude Code.
@@ -55,6 +55,7 @@ loadSessions();
   // Load bot registry from bots.yaml and ensure Kafka topics exist in Redpanda
   // Graceful — won't crash Foreman if Redpanda is not running
   loadBotRegistry();
+  registerWorkspaceBots();
   ensureBotTopics().catch((err) => {
     console.warn('[kafka] Topic setup skipped:', err.message);
   });

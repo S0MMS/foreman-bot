@@ -352,15 +352,7 @@ export default function App() {
       return
     }
 
-    // Workspace bots (slug/name format) — not yet wired for chat
-    if (activeBotName.includes('/')) {
-      const sysMsg = { id: `sys-${Date.now()}`, role: 'system', content: 'Workspace bots are not yet wired for chat — coming soon!', ts: Date.now() }
-      setMessagesByBot(prev => ({ ...prev, [activeBotName]: [...(prev[activeBotName] ?? []), sysMsg] }))
-      setIsLoading(false)
-      return
-    }
-
-    // Regular bot — call /api/chat
+    // Regular bot (including workspace bots) — call /api/chat
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
