@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 const STATUS_DOT = {
   online:  'bg-green-500',
@@ -196,8 +196,36 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
 
   const isArchitect = activeBotName === 'architect'
 
+  // ── Resizable width ──────────────────────────────────────────────────────────
+  const [width, setWidth] = useState(224) // default w-56 = 224px
+  const isResizing = useRef(false)
+
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault()
+    isResizing.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMouseMove = (e) => {
+      if (!isResizing.current) return
+      const newWidth = Math.min(Math.max(e.clientX, 160), 480)
+      setWidth(newWidth)
+    }
+
+    const onMouseUp = () => {
+      isResizing.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [])
+
   return (
-    <div className="w-56 flex-shrink-0 bg-[#161b22] flex flex-col">
+    <div className="flex-shrink-0 bg-[#161b22] flex flex-col relative" style={{ width }}>
       <div className="px-4 py-3 border-b border-[#30363d]">
         <span className="text-[#58a6ff] font-semibold text-sm tracking-wide uppercase">Foreman</span>
       </div>
@@ -306,6 +334,12 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
           <p className="text-[#484f58] text-xs py-1 px-2 italic">No workspaces</p>
         )}
       </nav>
+
+      {/* Resize handle */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-[#58a6ff] transition-colors"
+      />
     </div>
   )
 }
