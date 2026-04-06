@@ -1,0 +1,2 @@
+There's no canvas in this channel and no text was included in your message. What text did you want me to append "AbstractGraphViewController" to? Could you paste it or point me to where it lives?
+AbstractItemSummaryViewController

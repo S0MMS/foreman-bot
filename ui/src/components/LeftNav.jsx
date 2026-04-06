@@ -320,7 +320,7 @@ export default function LeftNav({ activeBotName, onSelectBot, botStatuses }) {
                             : 'text-[#8b949e] hover:bg-[#21262d] hover:text-[#e6edf3]'
                           }`}
                       >
-                        <span className="w-2 h-2 rounded-full flex-shrink-0 bg-gray-600" />
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[botStatuses?.[botId]] ?? STATUS_DOT.offline}`} title={botStatuses?.[botId] ?? 'offline'} />
                         <span className="truncate">{bot.name}</span>
                       </button>
                     )

@@ -20,7 +20,7 @@ import { getState } from "./session.js";
 import { startWebhookServer } from "./webhook.js";
 import { startTemporalWorker } from "./temporal/worker.js";
 import { loadBotRegistry, registerWorkspaceBots } from "./bots.js";
-import { ensureBotTopics, startBotConsumers } from "./kafka.js";
+import { ensureBotTopics, startBotConsumers, startOutboxConsumer } from './kafka.js';
 
 // Prevent "nested session" detection when the Agent SDK spawns Claude Code.
 // The SDK inherits process.env and sets CLAUDECODE=1 on child processes;
@@ -62,6 +62,10 @@ loadSessions();
   // Start Kafka consumer loop — non-fatal, Slack transport unaffected if this fails
   startBotConsumers().catch((err) => {
     console.warn('[kafka] Bot consumers not started:', err.message);
+  });
+  // Start persistent outbox consumer — routes Kafka responses to pending callBotByName promises
+  startOutboxConsumer().catch((err) => {
+    console.warn('[kafka] Outbox consumer not started:', err.message);
   });
 
   console.log("Foreman is running");

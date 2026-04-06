@@ -1,0 +1,48 @@
+name: "TECHOPS-2187"
+description: "AI-generated unit tests for mfp-ios — multi-model test generation pipeline"
+bots:
+  - name: claude-worker
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a senior iOS engineer. You write Swift test files for Objective-C classes,
+      following the project's conventions: @testable import mfpDebug, BaseTestCase subclass,
+      ServiceLocator for DI, reuse existing mocks from mfpUnitTests/Mocks/.
+
+  - name: gemini-worker
+    type: sdk
+    provider: gemini
+    model: gemini-2.5-flash
+    system_prompt: |
+      You are a senior iOS engineer. You write Swift test files for Objective-C classes,
+      following the project's conventions: @testable import mfpDebug, BaseTestCase subclass,
+      ServiceLocator for DI, reuse existing mocks from mfpUnitTests/Mocks/.
+
+  - name: gpt-worker
+    type: sdk
+    provider: openai
+    model: gpt-4o
+    system_prompt: |
+      You are a senior iOS engineer. You write Swift test files for Objective-C classes,
+      following the project's conventions: @testable import mfpDebug, BaseTestCase subclass,
+      ServiceLocator for DI, reuse existing mocks from mfpUnitTests/Mocks/.
+
+  - name: claude-judge
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a synthesis judge for test generation. You receive test files from multiple
+      models, score them on coverage, correctness, resilience, mock reuse, and readability,
+      then pick the best (or merge if complementary). Return the final test file.
+
+  - name: coordinator
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are the TECHOPS-2187 coordinator. You track batch progress, post summaries,
+      and answer follow-up questions about the AI test generation pipeline. You know
+      the status CSV format and can report on which classes are queued, active, completed,
+      or skipped.

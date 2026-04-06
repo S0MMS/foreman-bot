@@ -201,11 +201,13 @@ export function registerWorkspaceBots(): void {
         system_prompt: bot.system_prompt ?? `You are ${bot.name}, a bot in the ${ws.name} workspace.`,
       });
 
+      // Kafka doesn't allow '/' in topic names — use '.' as separator
+      const topicPrefix = namespacedName.replace(/\//g, '.');
       reg.set(namespacedName, {
         name: namespacedName,
         definition,
-        inboxTopic: `${namespacedName}.inbox`,
-        outboxTopic: `${namespacedName}.outbox`,
+        inboxTopic: `${topicPrefix}.inbox`,
+        outboxTopic: `${topicPrefix}.outbox`,
       });
       count++;
     }

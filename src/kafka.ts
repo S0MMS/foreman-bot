@@ -92,14 +92,15 @@ export async function getProducer(): Promise<Producer> {
 /**
  * Produce a message to a bot's inbox topic.
  * correlationId is used to match the response on the outbox.
+ * Uses the bot's registered inboxTopic (handles namespace separator).
  */
 export async function sendToBot(
   botName: string,
   prompt: string,
   correlationId: string,
 ): Promise<void> {
+  const entry = getBot(botName);
   const p = await getProducer();
-  const topic = `${botName}.inbox`;
   const message = JSON.stringify({
     id: correlationId,
     correlationId,
@@ -108,7 +109,7 @@ export async function sendToBot(
     timestamp: new Date().toISOString(),
   });
 
-  await p.send({ topic, messages: [{ key: correlationId, value: message }] });
+  await p.send({ topic: entry.inboxTopic, messages: [{ key: correlationId, value: message }] });
 }
 
 /**
@@ -195,11 +196,106 @@ async function callBot(entry: BotEntry, prompt: string): Promise<string> {
   throw new Error(`Bot "${entry.name}" has unsupported type: ${definition.type}`);
 }
 
-/** Public wrapper — call a bot by name from bots.yaml. Stateless, no session history. */
+// ── Persistent Outbox Consumer ────────────────────────────────────────────────
+// One consumer reads ALL outbox topics and routes responses to pending promises
+// via correlation ID. No race conditions — consumer is running before requests.
+
+interface PendingRequest {
+  resolve: (result: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingRequests = new Map<string, PendingRequest>();
+let outboxConsumerReady = false;
+
+/**
+ * Start a single persistent consumer for ALL bot outbox topics.
+ * Routes responses to pending `callBotByName` promises via correlationId.
+ * Call once at startup (after ensureBotTopics).
+ */
+export async function startOutboxConsumer(): Promise<void> {
+  const outboxTopics = getAllBots().map(b => b.outboxTopic);
+  if (outboxTopics.length === 0) return;
+
+  const consumer = getKafkaClient().consumer({ groupId: 'foreman-outbox-router' });
+  await consumer.connect();
+
+  for (const topic of outboxTopics) {
+    await consumer.subscribe({ topic, fromBeginning: false });
+  }
+
+  await consumer.run({
+    eachMessage: async ({ message }) => {
+      try {
+        const envelope = JSON.parse(message.value?.toString() ?? '{}') as {
+          correlationId?: string;
+          result?: string;
+        };
+        const cid = envelope.correlationId;
+        if (cid && pendingRequests.has(cid)) {
+          const pending = pendingRequests.get(cid)!;
+          clearTimeout(pending.timer);
+          pendingRequests.delete(cid);
+          pending.resolve(envelope.result ?? '');
+        }
+      } catch { /* skip malformed */ }
+    },
+  });
+
+  outboxConsumerReady = true;
+  console.log(`[kafka] Outbox router ready — listening on ${outboxTopics.length} outbox topic(s)`);
+}
+
+/**
+ * Call a bot via Kafka: produce to inbox, wait for response on outbox.
+ * Every message flows through Redpanda — observable, persistent, replayable.
+ * Falls back to direct LLM call if Kafka is unavailable.
+ */
 export async function callBotByName(botName: string, prompt: string): Promise<string> {
   const entry = getBot(botName);
   if (!entry) throw new Error(`Bot not found: ${botName}`);
-  return callBot(entry, prompt);
+
+  // If outbox consumer isn't running, fall back to direct call
+  if (!outboxConsumerReady) {
+    console.warn(`[kafka] Outbox consumer not ready — direct call for ${botName}`);
+    return callBot(entry, prompt);
+  }
+
+  const correlationId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  try {
+    // Register the pending request BEFORE producing (no race condition)
+    const responsePromise = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingRequests.delete(correlationId);
+        reject(new Error(`Timeout waiting for ${botName} response (correlationId=${correlationId})`));
+      }, 120_000);
+
+      pendingRequests.set(correlationId, { resolve, reject, timer });
+    });
+
+    // Produce to inbox
+    const p = await getProducer();
+    await p.send({
+      topic: entry.inboxTopic,
+      messages: [{
+        key: correlationId,
+        value: JSON.stringify({
+          correlationId,
+          botName,
+          prompt,
+          timestamp: new Date().toISOString(),
+        }),
+      }],
+    });
+
+    return await responsePromise;
+  } catch (err: any) {
+    pendingRequests.delete(correlationId);
+    console.warn(`[kafka] Kafka round-trip failed for ${botName}: ${err.message} — falling back to direct call`);
+    return callBot(entry, prompt);
+  }
 }
 
 /**
