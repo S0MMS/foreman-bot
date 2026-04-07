@@ -24,6 +24,10 @@ export interface ForemanConfig {
   jiraProjectKey?: string;   // e.g. POW
   mentionsChannel?: string;  // Slack channel ID to route Jira mentions to (e.g. C08XXXXXXX)
   mentionsPollMinutes?: number; // How often to poll for mentions (default: 1)
+  mattermostUrl?: string;       // e.g. http://localhost:8065
+  mattermostAdminToken?: string; // Mattermost personal access token (admin)
+  mattermostTeamId?: string;    // Mattermost team ID
+  mattermostBotTokens?: Record<string, string>; // bot name → bot access token
 }
 
 export function readConfig(): ForemanConfig {

@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { registerUiRoutes } from './ui-api.js';
 import { handleArchitectConnection } from './ui-claude.js';
+import { handleMattermostAction } from './mattermost.js';
 import type { App } from '@slack/bolt';
 
 const DEFAULT_PORT = 3001;
@@ -36,6 +37,9 @@ export function startWebhookServer(port = DEFAULT_PORT, slackApp?: App): void {
   app.use(express.json());
 
   registerUiRoutes(app);
+
+  // Mattermost interactive message actions (Approve/Deny buttons)
+  app.post("/api/mm/actions", handleMattermostAction);
 
   // Health check
   app.get("/health", (_req, res) => {

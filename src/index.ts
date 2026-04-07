@@ -21,6 +21,7 @@ import { startWebhookServer } from "./webhook.js";
 import { startTemporalWorker } from "./temporal/worker.js";
 import { loadBotRegistry, registerWorkspaceBots } from "./bots.js";
 import { ensureBotTopics, startBotConsumers, startOutboxConsumer } from './kafka.js';
+import { startMattermostBridge } from './mattermost.js';
 
 // Prevent "nested session" detection when the Agent SDK spawns Claude Code.
 // The SDK inherits process.env and sets CLAUDECODE=1 on child processes;
@@ -66,6 +67,10 @@ loadSessions();
   // Start persistent outbox consumer — routes Kafka responses to pending callBotByName promises
   startOutboxConsumer().catch((err) => {
     console.warn('[kafka] Outbox consumer not started:', err.message);
+  });
+  // Start Mattermost bridge (graceful — won't crash if Mattermost is not running)
+  startMattermostBridge().catch((err) => {
+    console.warn('[mattermost] Bridge not started:', err.message);
   });
 
   console.log("Foreman is running");

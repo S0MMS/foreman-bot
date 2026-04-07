@@ -35,6 +35,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.83",
     "@anthropic-ai/sdk": "^0.82.0",
     "@google/generative-ai": "^0.24.1",
+    "@mattermost/client": "^11.5.0",
     "@slack/bolt": "^4.1.0",
     "@temporalio/activity": "^1.15.0",
     "@temporalio/client": "^1.15.0",

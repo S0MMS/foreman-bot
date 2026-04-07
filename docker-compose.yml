@@ -1,14 +1,16 @@
 # Foreman 2.0 Infrastructure
-# Starts Redpanda only — Temporal runs natively via Homebrew (temporal server start-dev)
+# Starts Redpanda + Mattermost — Temporal runs natively via Homebrew (temporal server start-dev)
 #
 # Usage:
-#   docker compose up -d        # start Redpanda in background
+#   docker compose up -d        # start everything in background
 #   docker compose down         # stop and remove containers
 #   docker compose logs -f      # tail logs
 #
 # Services:
 #   Redpanda broker   → localhost:19092  (Kafka wire protocol — Foreman connects here)
 #   Redpanda Console  → localhost:8080   (web UI — watch bot messages here)
+#   Mattermost        → localhost:8065   (chat UI — talk to bots here)
+#   PostgreSQL        → localhost:5432   (Mattermost database — internal)
 #
 # Everything else runs natively:
 #   Temporal server   → temporal server start-dev   (localhost:7233)
@@ -61,5 +63,60 @@ services:
     ports:
       - "8080:8080"     # Console UI → localhost:8080
 
+  # ── PostgreSQL (Mattermost database) ────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: foreman-postgres
+    environment:
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: mmuser_password
+      POSTGRES_DB: mattermost
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Mattermost ─────────────────────────────────────────────────────────────
+  mattermost:
+    image: mattermost/mattermost-team-edition:latest
+    platform: linux/amd64
+    container_name: foreman-mattermost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://mmuser:mmuser_password@postgres:5432/mattermost?sslmode=disable&connect_timeout=10
+      MM_SERVICESETTINGS_SITEURL: http://localhost:8065
+      MM_SERVICESETTINGS_ENABLEBOTACCOUNTCREATION: "true"
+      MM_SERVICESETTINGS_ENABLEPOSTUSERNAMEOVERRIDE: "true"
+      MM_SERVICESETTINGS_ENABLEPOSTICONOVERRIDE: "true"
+      MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS: "true"
+      MM_SERVICESETTINGS_ENABLEOAUTHSERVICEPROVIDER: "true"
+      MM_TEAMSETTINGS_ENABLEOPENSERVER: "true"
+      MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
+    ports:
+      - "8065:8065"     # Mattermost UI → localhost:8065
+    volumes:
+      - mattermost-data:/mattermost/data
+      - mattermost-logs:/mattermost/logs
+      - mattermost-config:/mattermost/config
+      - mattermost-plugins:/mattermost/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8065/api/v4/system/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
 volumes:
   redpanda-data:
+  postgres-data:
+  mattermost-data:
+  mattermost-logs:
+  mattermost-config:
+  mattermost-plugins:
