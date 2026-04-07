@@ -200,7 +200,7 @@ async function processChannelMessage(
     app.client.chat.postMessage({ channel, text: formatProgress(toolName, input) }).catch(() => {});
   };
 
-  const mcpServer = createCanvasMcpServer(channel, app);
+  const mcpServer = createCanvasMcpServer(channel, app, channel.startsWith("D"));
 
   const sessionStartMs = Date.now();
   let result;
@@ -313,7 +313,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
     const runCanvasPrompt = async (prompt: string): Promise<string> => {
       const state = getState(channel);
       const name = state.name ?? "Foreman";
-      const canvasMcp = createCanvasMcpServer(channel, app);
+      const canvasMcp = createCanvasMcpServer(channel, app, channel.startsWith("D"));
       const onApprovalNeeded = async (toolName: string, input: Record<string, unknown>) =>
         new Promise<ApprovalResult>((resolve) => {
           setPendingApproval(channel, { resolve, toolName, input, requesterId: userId });

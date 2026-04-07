@@ -1,28 +1,29 @@
-# Session Handoff — 2026-04-07 (reboot 18 — Mattermost bridge)
+# Session Handoff — 2026-04-07 (reboot 27 — bump reaction delay to 1000ms)
 
-## What we were working on
-Mattermost integration — replacing the custom React UI with Mattermost as the conversation platform.
+## What We Changed
+Bumped the pre-reaction delay from 500ms to 1000ms for extra safety margin. 500ms confirmed the race condition theory — 🤔 appeared for the first time. 1000ms gives the browser more headroom.
 
-## Decisions made
-- Mattermost replaces the custom React UI entirely (option #1)
-- 1:1 Slack → Mattermost swap first, then wire Kafka back in
-- Using raw fetch + ws instead of @mattermost/client SDK (CJS/browser issues)
-- Conversation layer design: Kafka log topics + conversation IDs independent of participants
-- Mattermost runs via Docker (team-edition with platform: linux/amd64 for Apple Silicon)
+## Files Changed
+| File | Change |
+|---|---|
+| `src/mattermost.ts` | `setTimeout(resolve, 500)` → `setTimeout(resolve, 1000)` |
 
-## What's been built
-- Mattermost + PostgreSQL in docker-compose.yml (running at localhost:8065)
-- 7 bot accounts created (architect, betty, clive, gemini-worker, gpt-worker, claude-judge, test-double)
-- All bots added to Foreman team + Town Square channel
-- Bot tokens saved to ~/.foreman/config.json
-- `src/mattermost.ts` — full bridge: WebSocket events, message processing, /cc commands, tool approval
-- Wired into index.ts and webhook.ts
+## Full Reaction Flow (current)
+1. Message received
+2. 1000ms pause (browser sets up reaction listener)
+3. 🤔 added to user's message
+4. Claude processing (long — 🤔 visible whole time)
+5. `onBeforePost`: typing indicator + 1s pause + ✅ added
+6. Response posted
 
-## Key principle (from Chris)
-There is no such thing as a "Slack bot" or "Kafka bot." They are all just LLM SDK calls. The transport (Slack, Kafka, WebSocket) should not determine whether a bot has memory.
+## What Was Accomplished This Session
+- SelfReboot DM detection fixed (Mattermost channel IDs don't start with "D")
+- Reboot notification working (posts to channel after restart)
+- Typing indicator now fires AFTER processing, not before
+- 🤔 reaction race condition found and fixed
+- All 3 UI improvements working
 
-## Next steps after reboot
-1. Test basic chat through Mattermost Town Square
-2. Test /cc commands
-3. Wire Kafka routing for non-Architect bots
-4. Port remaining /cc commands (canvas, spec, implement, etc.)
+## Next Steps
+1. Verify 🤔 still appears with 1s delay
+2. Wire Kafka routing for non-Architect bots
+3. Port remaining /cc commands to Foreman 2.0

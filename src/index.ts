@@ -21,7 +21,7 @@ import { startWebhookServer } from "./webhook.js";
 import { startTemporalWorker } from "./temporal/worker.js";
 import { loadBotRegistry, registerWorkspaceBots } from "./bots.js";
 import { ensureBotTopics, startBotConsumers, startOutboxConsumer } from './kafka.js';
-import { startMattermostBridge } from './mattermost.js';
+import { startMattermostBridge, postMessage as postMattermostMessage } from './mattermost.js';
 
 // Prevent "nested session" detection when the Agent SDK spawns Claude Code.
 // The SDK inherits process.env and sets CLAUDECODE=1 on child processes;
@@ -77,16 +77,22 @@ loadSessions();
   console.log(`  Working directory: ${process.env.CLAUDE_CWD || process.cwd()}`);
 
   // Check for self-reboot marker and post confirmation
+  // Marker format: "transport:channelId" (e.g. "mattermost:f6tri4dmb3b5dbqwrodxgb3cjo" or "slack:D1234ABCD")
   const markerPath = join(homedir(), ".foreman", "reboot-channel.txt");
   try {
-    const channelId = readFileSync(markerPath, "utf-8").trim();
+    const raw = readFileSync(markerPath, "utf-8").trim();
     unlinkSync(markerPath);
-    if (channelId) {
-      await app.client.chat.postMessage({
-        channel: channelId,
-        text: ":white_check_mark: Reboot successful — up and running!",
-      });
-      console.log(`Self-reboot complete — notified channel ${channelId}`);
+    if (raw) {
+      const colonIdx = raw.indexOf(":");
+      const transport = colonIdx !== -1 ? raw.slice(0, colonIdx) : "slack";
+      const channelId = colonIdx !== -1 ? raw.slice(colonIdx + 1) : raw;
+      const msg = "Reboot successful — up and running!";
+      if (transport === "mattermost") {
+        await postMattermostMessage(channelId, msg);
+      } else {
+        await app.client.chat.postMessage({ channel: channelId, text: `:white_check_mark: ${msg}` });
+      }
+      console.log(`Self-reboot complete — notified ${transport} channel ${channelId}`);
     }
   } catch {
     // No marker file — normal startup, nothing to do

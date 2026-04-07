@@ -48,6 +48,7 @@ let MM_ADMIN_TOKEN = "";
 let MM_TEAM_ID = "";
 let MM_BOT_TOKENS: Record<string, string> = {};
 let MM_ARCHITECT_TOKEN = "";
+let MM_ARCHITECT_USER_ID = "";
 
 // Map of Mattermost bot user IDs — messages from these are filtered out
 const botUserIds = new Set<string>();
@@ -70,7 +71,7 @@ async function mmFetch(method: string, endpoint: string, body?: unknown, token?:
   return res.json();
 }
 
-async function postMessage(channelId: string, text: string, botToken?: string): Promise<void> {
+export async function postMessage(channelId: string, text: string, botToken?: string): Promise<void> {
   await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, botToken || MM_ARCHITECT_TOKEN);
 }
 
@@ -144,6 +145,8 @@ async function processChannelMessage(
   channel: string,
   text: string,
   requesterId: string,
+  isDM = false,
+  onBeforePost?: () => Promise<void>,
 ): Promise<{ result: string; sessionId: string; cost: number; turns: number }> {
   const state = getState(channel);
 
@@ -197,7 +200,7 @@ async function processChannelMessage(
   };
 
   // Create MCP server — pass null for Slack app (not used in MM bridge)
-  const mcpServer = createCanvasMcpServer(channel, null as any);
+  const mcpServer = createCanvasMcpServer(channel, null as any, isDM, "mattermost");
 
   const sessionStartMs = Date.now();
   let result;
@@ -212,6 +215,9 @@ async function processChannelMessage(
     result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any);
   }
   if (result.sessionId) setSessionId(channel, result.sessionId);
+
+  // Fire pre-post hook (e.g. typing indicator + reactions) before posting response
+  if (onBeforePost) await onBeforePost();
 
   // Post response — Markdown works natively in Mattermost (no format conversion!)
   const responseText = result.result || "(no response)";
@@ -387,6 +393,8 @@ function connectWebSocket(): void {
       if (!text) return;
 
       const requesterId = post.user_id;
+      // Mattermost channel_type "D" = direct message, "G" = group DM
+      const isDM = msg.data?.channel_type === "D" || msg.data?.channel_type === "G";
 
       // Handle /cc commands (from message text, since we might not have slash commands set up)
       if (text.startsWith("/cc ") || text === "/cc") {
@@ -401,27 +409,34 @@ function connectWebSocket(): void {
       // Handle ! escape for Claude slash commands
       const processedText = text.startsWith("!") ? "/" + text.slice(1) : text;
 
-      // Add thinking reaction (emoji) — Mattermost uses reactions on posts
+      // Add thinking reaction (signals: "I see your message")
+      // Small delay gives the browser time to set up its reaction listener for the new post
+      await new Promise(resolve => setTimeout(resolve, 1000));
       try {
         await mmFetch("POST", "/reactions", {
-          user_id: Object.keys(MM_BOT_TOKENS).length > 0 ? undefined : undefined,
+          user_id: MM_ARCHITECT_USER_ID,
           post_id: post.id,
-          emoji_name: "hourglass_flowing_sand",
-        });
+          emoji_name: "thinking_face",
+        }, MM_ARCHITECT_TOKEN);
       } catch { /* ignore */ }
 
-      try {
-        await processChannelMessage(channel, processedText, requesterId);
-        // Remove hourglass, add checkmark
+      // onBeforePost: fires after thinking, just before response is posted
+      const onBeforePost = async () => {
         try {
-          await mmFetch("DELETE", `/users/me/posts/${post.id}/reactions/hourglass_flowing_sand`);
-          await mmFetch("POST", "/reactions", { post_id: post.id, emoji_name: "white_check_mark" });
+          await mmFetch("POST", `/users/${MM_ARCHITECT_USER_ID}/typing`, { channel_id: channel }, MM_ARCHITECT_TOKEN);
         } catch { /* ignore */ }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        try {
+          await mmFetch("POST", "/reactions", { user_id: MM_ARCHITECT_USER_ID, post_id: post.id, emoji_name: "white_check_mark" }, MM_ARCHITECT_TOKEN);
+        } catch { /* ignore */ }
+      };
+
+      try {
+        await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost);
       } catch (err) {
         await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
         try {
-          await mmFetch("DELETE", `/users/me/posts/${post.id}/reactions/hourglass_flowing_sand`);
-          await mmFetch("POST", "/reactions", { post_id: post.id, emoji_name: "x" });
+          await mmFetch("POST", "/reactions", { user_id: MM_ARCHITECT_USER_ID, post_id: post.id, emoji_name: "x" }, MM_ARCHITECT_TOKEN);
         } catch { /* ignore */ }
       }
     }
@@ -482,6 +497,15 @@ export async function startMattermostBridge(): Promise<void> {
   if (!MM_URL || !MM_ADMIN_TOKEN) {
     console.log("[mattermost] No Mattermost config found — bridge not started");
     return;
+  }
+
+  // Discover architect bot's user ID (needed for reactions + typing indicator)
+  try {
+    const me = await mmFetch("GET", "/users/me", undefined, MM_ARCHITECT_TOKEN);
+    MM_ARCHITECT_USER_ID = me.id;
+    console.log(`[mattermost] Architect bot user ID: ${MM_ARCHITECT_USER_ID}`);
+  } catch (err) {
+    console.warn("[mattermost] Could not fetch architect user ID:", (err as Error).message);
   }
 
   // Discover bot user IDs so we can filter their messages

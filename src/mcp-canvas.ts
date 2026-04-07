@@ -16,7 +16,7 @@ import { readConfig } from "./config.js";
  * Create an in-process MCP server that exposes CRUD canvas tools with provenance tracking.
  * Each bot tags its headings with *[bot-name] Heading* so multiple bots can coexist.
  */
-export function createCanvasMcpServer(channelId: string, app: App) {
+export function createCanvasMcpServer(channelId: string, app: App, isDM = false, transport: "slack" | "mattermost" = "slack") {
   const getBotName = () => getState(channelId).name ?? "Foreman";
 
   return createSdkMcpServer({
@@ -271,14 +271,16 @@ export function createCanvasMcpServer(channelId: string, app: App) {
         {},
         async () => {
           // Only allow from DM channels or the UI Architect session
-          if (!channelId.startsWith("D") && channelId !== "ui:architect") {
+          // isDM covers Mattermost DMs (no "D" prefix); channelId.startsWith("D") covers Slack DMs
+          if (!isDM && !channelId.startsWith("D") && channelId !== "ui:architect") {
             return { content: [{ type: "text" as const, text: "SelfReboot is only available from the DM channel." }] };
           }
 
           try {
             // Write a marker file so the process knows to post a confirmation after restart
+            // Format: "transport:channelId" so index.ts can route to the right transport
             const markerPath = join(homedir(), ".foreman", "reboot-channel.txt");
-            writeFileSync(markerPath, channelId, "utf-8");
+            writeFileSync(markerPath, `${transport}:${channelId}`, "utf-8");
 
             // Schedule the exit to give time for the response to be sent
             setTimeout(() => {
