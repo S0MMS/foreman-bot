@@ -279,17 +279,17 @@ async function processChannelMessage(
   return { result: result.result || "", sessionId: result.sessionId || "", cost: result.cost || 0, turns: result.turns || 0 };
 }
 
-// ── /cc command handler ───────────────────────────────────────────────────────
+// ── /f command handler ────────────────────────────────────────────────────────
 
-async function handleCommand(channel: string, text: string, userId: string): Promise<void> {
-  const args = text.replace(/^\/cc\s+/, "").trim().split(/\s+/);
+async function handleCommand(channel: string, text: string, userId: string, botToken?: string): Promise<void> {
+  const args = text.replace(/^\/f\s+/, "").trim().split(/\s+/);
   const subcommand = args[0]?.toLowerCase();
-  const respond = (msg: string) => postMessage(channel, msg);
+  const respond = (msg: string) => postMessage(channel, msg, botToken);
 
   switch (subcommand) {
     case "cwd": {
       const path = args[1];
-      if (!path) { await respond("Usage: `/cc cwd /absolute/path`"); return; }
+      if (!path) { await respond("Usage: `/f cwd /absolute/path`"); return; }
       if (!isAbsolute(path)) { await respond("Path must be absolute."); return; }
       if (!existsSync(path)) { await respond(`Directory not found: \`${path}\``); return; }
       setCwd(channel, path);
@@ -385,14 +385,14 @@ async function handleCommand(channel: string, text: string, userId: string): Pro
     default: {
       await respond(
         "**Available commands:**\n" +
-        "- `/cc cwd <path>` — set working directory\n" +
-        "- `/cc model <name>` — switch model (e.g. `opus`, `openai:gpt-4o`)\n" +
-        "- `/cc name <name>` — set bot persona name\n" +
-        "- `/cc session` — show session info\n" +
-        "- `/cc new` — reset session\n" +
-        "- `/cc stop` — abort current query\n" +
-        "- `/cc auto-approve on|off` — toggle tool auto-approval\n" +
-        "- `/cc plugin <path>` — load a plugin directory"
+        "- `/f cwd <path>` — set working directory\n" +
+        "- `/f model <name>` — switch model (e.g. `opus`, `openai:gpt-4o`)\n" +
+        "- `/f name <name>` — set bot persona name\n" +
+        "- `/f session` — show session info\n" +
+        "- `/f new` — reset session\n" +
+        "- `/f stop` — abort current query\n" +
+        "- `/f auto-approve on|off` — toggle tool auto-approval\n" +
+        "- `/f plugin <path>` — load a plugin directory"
       );
       break;
     }
@@ -437,12 +437,13 @@ function connectWebSocket(): void {
       // Mattermost channel_type "D" = direct message, "G" = group DM
       const isDM = msg.data?.channel_type === "D" || msg.data?.channel_type === "G";
 
-      // Handle /cc commands (from message text, since we might not have slash commands set up)
-      if (text.startsWith("/cc ") || text === "/cc") {
+      // Handle /f commands — either from registered slash command or typed as text
+      if (text.startsWith("/f ") || text === "/f") {
+        const fBotConfig = await identifyChannelBot(channel);
         try {
-          await handleCommand(channel, text, requesterId);
+          await handleCommand(channel, text, requesterId, fBotConfig?.token);
         } catch (err) {
-          await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
+          await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`, fBotConfig?.token);
         }
         return;
       }
@@ -528,6 +529,45 @@ export function handleMattermostAction(req: any, res: any): void {
   });
 }
 
+// ── Slash command registration + handler ──────────────────────────────────────
+
+async function registerSlashCommand(): Promise<void> {
+  if (!MM_TEAM_ID) return;
+  try {
+    const commands = await mmFetch("GET", `/commands?team_id=${MM_TEAM_ID}&custom_only=true`);
+    if (Array.isArray(commands) && commands.some((c: any) => c.trigger === "f")) {
+      console.log("[mattermost] /f slash command already registered");
+      return;
+    }
+    await mmFetch("POST", "/commands", {
+      team_id: MM_TEAM_ID,
+      trigger: "f",
+      method: "P",
+      url: `${MM_ACTION_URL}/api/mm/slash`,
+      display_name: "Foreman",
+      description: "Control your Foreman bot session",
+      auto_complete: true,
+      auto_complete_hint: "session|model|cwd|new|stop|name|plugin|auto-approve",
+      auto_complete_desc: "Foreman bot commands",
+    });
+    console.log("[mattermost] Registered /f slash command");
+  } catch (err) {
+    console.warn("[mattermost] Could not register /f slash command:", (err as Error).message);
+  }
+}
+
+export function handleSlashCommand(req: any, res: any): void {
+  const { channel_id, text, user_id } = req.body;
+  res.json({ response_type: "ephemeral", text: "" }); // immediate ACK
+  const fullText = `/f ${(text || "").trim()}`.trim();
+  identifyChannelBot(channel_id).then(botConfig => {
+    const botToken = botConfig?.token;
+    handleCommand(channel_id, fullText, user_id, botToken).catch(err => {
+      postMessage(channel_id, `Error: ${err instanceof Error ? err.message : String(err)}`, botToken).catch(() => {});
+    });
+  });
+}
+
 // ── Initialization ────────────────────────────────────────────────────────────
 
 export async function startMattermostBridge(): Promise<void> {
@@ -574,6 +614,9 @@ export async function startMattermostBridge(): Promise<void> {
   } catch (err) {
     console.warn("[mattermost] Could not fetch bot list:", (err as Error).message);
   }
+
+  // Auto-register /f slash command
+  await registerSlashCommand();
 
   // Connect WebSocket
   connectWebSocket();

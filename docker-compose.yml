@@ -100,8 +100,9 @@ services:
       MM_SERVICESETTINGS_ENABLEOAUTHSERVICEPROVIDER: "true"
       MM_TEAMSETTINGS_ENABLEOPENSERVER: "true"
       MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
+      MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS: "host.docker.internal"
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # allows Mattermost to reach Foreman on the host (button callbacks to :3001)
+      - "host.docker.internal:host-gateway"
     ports:
       - "8065:8065"     # Mattermost UI → localhost:8065
     volumes:
