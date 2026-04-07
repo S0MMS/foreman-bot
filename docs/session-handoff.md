@@ -1,29 +1,26 @@
-# Session Handoff — 2026-04-07 (reboot 27 — bump reaction delay to 1000ms)
+# Session Handoff — 2026-04-07 (reboot 29 — remove ✅ reaction)
 
 ## What We Changed
-Bumped the pre-reaction delay from 500ms to 1000ms for extra safety margin. 500ms confirmed the race condition theory — 🤔 appeared for the first time. 1000ms gives the browser more headroom.
+- Removed ✅ reaction and the 1s pre-post delay from `onBeforePost` in `mattermost.ts`
+- Kept: 🤔 on receipt (1s delay), typing indicator just before response
+- Also in this session (not yet committed): `docker-compose.yml` got `extra_hosts: host.docker.internal:host-gateway` on Mattermost service to fix action button callbacks
 
-## Files Changed
-| File | Change |
-|---|---|
-| `src/mattermost.ts` | `setTimeout(resolve, 500)` → `setTimeout(resolve, 1000)` |
-
-## Full Reaction Flow (current)
+## Reaction Flow (current)
 1. Message received
-2. 1000ms pause (browser sets up reaction listener)
-3. 🤔 added to user's message
-4. Claude processing (long — 🤔 visible whole time)
-5. `onBeforePost`: typing indicator + 1s pause + ✅ added
+2. 1000ms pause (browser reaction listener setup)
+3. 🤔 added
+4. Claude processing
+5. `onBeforePost`: typing indicator fires
 6. Response posted
 
-## What Was Accomplished This Session
-- SelfReboot DM detection fixed (Mattermost channel IDs don't start with "D")
-- Reboot notification working (posts to channel after restart)
-- Typing indicator now fires AFTER processing, not before
-- 🤔 reaction race condition found and fixed
-- All 3 UI improvements working
+## In Progress (not done yet)
+- `/f` command rename (was mid-edit when session cut off) — `handleCommand` still uses `/cc` prefix stripping
+- `handleSlashCommand` export + `registerSlashCommand()` — not yet added
+- `webhook.ts` needs `express.urlencoded()` + `POST /api/mm/slash` route
+- Action button callback still broken (Mattermost can't reach host.docker.internal even with docker-compose fix — needs more investigation)
 
 ## Next Steps
-1. Verify 🤔 still appears with 1s delay
-2. Wire Kafka routing for non-Architect bots
-3. Port remaining /cc commands to Foreman 2.0
+1. Verify ✅ is gone after reboot
+2. Finish `/f` command rename + slash command registration
+3. Investigate action button callback (host.docker.internal still not resolving)
+4. Commit all pending changes

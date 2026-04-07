@@ -49,6 +49,9 @@ let MM_TEAM_ID = "";
 let MM_BOT_TOKENS: Record<string, string> = {};
 let MM_ARCHITECT_TOKEN = "";
 let MM_ARCHITECT_USER_ID = "";
+// Mattermost runs in Docker — it calls this URL when a button is clicked.
+// "localhost" inside Docker = the container, not the host. Use host.docker.internal to reach host.
+let MM_ACTION_URL = "http://host.docker.internal:3001";
 
 // Map of Mattermost bot user IDs — messages from these are filtered out
 const botUserIds = new Set<string>();
@@ -180,14 +183,14 @@ async function processChannelMessage(
         {
           name: "Approve",
           integration: {
-            url: `http://localhost:3001/api/mm/actions`,
+            url: `${MM_ACTION_URL}/api/mm/actions`,
             context: { action: "approve", channel },
           },
         },
         {
           name: "Deny",
           integration: {
-            url: `http://localhost:3001/api/mm/actions`,
+            url: `${MM_ACTION_URL}/api/mm/actions`,
             context: { action: "deny", channel },
           },
         },
@@ -420,14 +423,10 @@ function connectWebSocket(): void {
         }, MM_ARCHITECT_TOKEN);
       } catch { /* ignore */ }
 
-      // onBeforePost: fires after thinking, just before response is posted
+      // onBeforePost: fires just before response is posted — show typing indicator
       const onBeforePost = async () => {
         try {
           await mmFetch("POST", `/users/${MM_ARCHITECT_USER_ID}/typing`, { channel_id: channel }, MM_ARCHITECT_TOKEN);
-        } catch { /* ignore */ }
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        try {
-          await mmFetch("POST", "/reactions", { user_id: MM_ARCHITECT_USER_ID, post_id: post.id, emoji_name: "white_check_mark" }, MM_ARCHITECT_TOKEN);
         } catch { /* ignore */ }
       };
 
@@ -493,6 +492,7 @@ export async function startMattermostBridge(): Promise<void> {
   MM_TEAM_ID = (config as any).mattermostTeamId;
   MM_BOT_TOKENS = (config as any).mattermostBotTokens || {};
   MM_ARCHITECT_TOKEN = MM_BOT_TOKENS.architect || MM_ADMIN_TOKEN;
+  if (config.mattermostActionUrl) MM_ACTION_URL = config.mattermostActionUrl;
 
   if (!MM_URL || !MM_ADMIN_TOKEN) {
     console.log("[mattermost] No Mattermost config found — bridge not started");
