@@ -148,6 +148,15 @@ function formatProgress(toolName: string, input: Record<string, unknown>): strin
       return `*Searching the web: \`${input.query}\`...*`;
     case "WebFetch":
       return `*Fetching \`${input.url}\`...*`;
+    case "Bash": {
+      const cmd = String(input.command || "").trim();
+      const short = cmd.length > 120 ? cmd.slice(0, 120) + "…" : cmd;
+      return `*Running \`${short}\`...*`;
+    }
+    case "Edit":
+      return `*Editing \`${input.file_path}\`...*`;
+    case "Write":
+      return `*Writing \`${input.file_path}\`...*`;
     case "Task":
     case "Explore":
       return `*Spawning subagent...*`;
