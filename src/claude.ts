@@ -36,14 +36,15 @@ export async function startSession(
   mcpServer?: McpSdkServerConfig & { instance: any },
   app?: App,
   onRateLimit?: (retryInMs: number) => void,
-  noSlackMcp?: boolean
+  noSlackMcp?: boolean,
+  systemPromptOverride?: string
 ): Promise<QueryResult> {
   const state = getState(channelId);
   const adapter = getAdapter(state.adapter ?? "anthropic");
   return adapter.start({
     channelId,
     prompt,
-    systemPrompt: buildSystemPrompt(name),
+    systemPrompt: systemPromptOverride ?? buildSystemPrompt(name),
     imagePaths,
     mcpServer,
     noSlackMcp,
@@ -71,7 +72,8 @@ export async function resumeSession(
   mcpServer?: McpSdkServerConfig & { instance: any },
   app?: App,
   onRateLimit?: (retryInMs: number) => void,
-  noSlackMcp?: boolean
+  noSlackMcp?: boolean,
+  systemPromptOverride?: string
 ): Promise<QueryResult> {
   const state = getState(channelId);
   const adapter = getAdapter(state.adapter ?? "anthropic");
@@ -79,7 +81,7 @@ export async function resumeSession(
     channelId,
     prompt,
     sessionId,
-    systemPrompt: buildSystemPrompt(name),
+    systemPrompt: systemPromptOverride ?? buildSystemPrompt(name),
     imagePaths,
     mcpServer,
     noSlackMcp,

@@ -1,26 +1,25 @@
-# Session Handoff — 2026-04-07 (reboot 29 — remove ✅ reaction)
+# Session Handoff — 2026-04-07 (reboot 31 — bot reactions use bot token)
 
 ## What We Changed
-- Removed ✅ reaction and the 1s pre-post delay from `onBeforePost` in `mattermost.ts`
-- Kept: 🤔 on receipt (1s delay), typing indicator just before response
-- Also in this session (not yet committed): `docker-compose.yml` got `extra_hosts: host.docker.internal:host-gateway` on Mattermost service to fix action button callbacks
+🤔 reaction wasn't appearing in Betty's DM channel because the Architect bot isn't a member of those channels and can't add reactions there. Fix:
+- Added `userId` field to `BotConfig`
+- Moved `identifyChannelBot()` call BEFORE the reaction code
+- Bot channels now use the bot's own `userId` + `token` for 🤔 reaction and typing indicator
+- Architect channels continue using `MM_ARCHITECT_USER_ID` + `MM_ARCHITECT_TOKEN` (unchanged)
 
-## Reaction Flow (current)
-1. Message received
-2. 1000ms pause (browser reaction listener setup)
-3. 🤔 added
-4. Claude processing
-5. `onBeforePost`: typing indicator fires
-6. Response posted
+## What's Working
+- Betty, Clive, claude-judge all respond in their DM channels
+- Architect responds in DMs to the admin user
+- 🤔 reaction should now appear in bot channels too (pending this reboot)
+- Reboot notification works
+- docker-compose has `extra_hosts: host.docker.internal:host-gateway`
 
-## In Progress (not done yet)
-- `/f` command rename (was mid-edit when session cut off) — `handleCommand` still uses `/cc` prefix stripping
-- `handleSlashCommand` export + `registerSlashCommand()` — not yet added
-- `webhook.ts` needs `express.urlencoded()` + `POST /api/mm/slash` route
-- Action button callback still broken (Mattermost can't reach host.docker.internal even with docker-compose fix — needs more investigation)
+## Still TODO
+- `/f` command rename + slash command auto-registration (was mid-edit when session cut off twice)
+- Action button callback investigation
+- FlowSpec verification
+- Commit all pending changes
 
-## Next Steps
-1. Verify ✅ is gone after reboot
-2. Finish `/f` command rename + slash command registration
-3. Investigate action button callback (host.docker.internal still not resolving)
-4. Commit all pending changes
+## Files Changed Since Last Commit (f1c780c)
+- `src/claude.ts` — systemPromptOverride param
+- `src/mattermost.ts` — bot routing, BotConfig.userId, bot reactions

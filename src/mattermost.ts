@@ -56,6 +56,30 @@ let MM_ACTION_URL = "http://host.docker.internal:3001";
 // Map of Mattermost bot user IDs — messages from these are filtered out
 const botUserIds = new Set<string>();
 
+// Bot routing: mmUserId → bot config (name, system prompt, token)
+interface BotConfig { name: string; displayName: string; systemPrompt: string; token: string; userId: string; }
+const botUserMap = new Map<string, BotConfig>();
+// Cache channel → bot so we don't re-fetch members every message
+const channelBotCache = new Map<string, BotConfig | null>();
+
+async function identifyChannelBot(channelId: string): Promise<BotConfig | null> {
+  if (channelBotCache.has(channelId)) return channelBotCache.get(channelId)!;
+  try {
+    const members = await mmFetch("GET", `/channels/${channelId}/members?per_page=50`, undefined, MM_ADMIN_TOKEN);
+    if (Array.isArray(members)) {
+      for (const member of members) {
+        const cfg = botUserMap.get(member.user_id);
+        if (cfg) {
+          channelBotCache.set(channelId, cfg);
+          return cfg;
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  channelBotCache.set(channelId, null);
+  return null;
+}
+
 // ── REST API helpers ──────────────────────────────────────────────────────────
 
 async function mmFetch(method: string, endpoint: string, body?: unknown, token?: string): Promise<any> {
@@ -150,6 +174,7 @@ async function processChannelMessage(
   requesterId: string,
   isDM = false,
   onBeforePost?: () => Promise<void>,
+  botConfig?: BotConfig,
 ): Promise<{ result: string; sessionId: string; cost: number; turns: number }> {
   const state = getState(channel);
 
@@ -159,8 +184,10 @@ async function processChannelMessage(
     state.contextPrimer = null;
   }
 
-  // Resolve channel name (persona) on first encounter
-  if (state.name === null) {
+  // Resolve channel name (persona) — use bot's display name if routing to a named bot
+  if (botConfig) {
+    if (state.name !== botConfig.displayName) setName(channel, botConfig.displayName);
+  } else if (state.name === null) {
     setName(channel, generateCuteName());
   }
 
@@ -170,6 +197,7 @@ async function processChannelMessage(
   }
 
   const name = state.name ?? "Foreman";
+  const botToken = botConfig?.token;
 
   // Tool approval: post interactive buttons
   const onApprovalNeeded = async (
@@ -205,21 +233,22 @@ async function processChannelMessage(
   // Create MCP server — pass null for Slack app (not used in MM bridge)
   const mcpServer = createCanvasMcpServer(channel, null as any, isDM, "mattermost");
 
+  const systemPromptOverride = botConfig?.systemPrompt;
   const sessionStartMs = Date.now();
   let result;
   if (state.sessionId) {
     try {
-      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any);
+      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any, undefined, undefined, systemPromptOverride);
     } catch {
       clearSession(channel);
-      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any);
+      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any, undefined, undefined, systemPromptOverride);
     }
   } else {
-    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any);
+    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any, undefined, undefined, systemPromptOverride);
   }
   if (result.sessionId) setSessionId(channel, result.sessionId);
 
-  // Fire pre-post hook (e.g. typing indicator + reactions) before posting response
+  // Fire pre-post hook (e.g. typing indicator) before posting response
   if (onBeforePost) await onBeforePost();
 
   // Post response — Markdown works natively in Mattermost (no format conversion!)
@@ -229,13 +258,13 @@ async function processChannelMessage(
     ? responseText.match(/.{1,15000}/gs) || [responseText]
     : [responseText];
   for (const chunk of chunks) {
-    await postMessage(channel, chunk);
+    await postMessage(channel, chunk, botToken);
   }
 
   if (result.cost > 0) {
     const totalSec = Math.round((Date.now() - sessionStartMs) / 1000);
     const elapsedStr = totalSec >= 60 ? `${Math.floor(totalSec / 60)}m ${totalSec % 60}s` : `${totalSec}s`;
-    await postMessage(channel, `*Done in ${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedStr}*`);
+    await postMessage(channel, `*Done in ${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedStr}*`, botToken);
   }
 
   return { result: result.result || "", sessionId: result.sessionId || "", cost: result.cost || 0, turns: result.turns || 0 };
@@ -412,26 +441,33 @@ function connectWebSocket(): void {
       // Handle ! escape for Claude slash commands
       const processedText = text.startsWith("!") ? "/" + text.slice(1) : text;
 
+      // Identify which bot (if any) owns this channel — routes persona + token + reactions
+      const botConfig = await identifyChannelBot(channel);
+      const reactUserId = botConfig?.userId ?? MM_ARCHITECT_USER_ID;
+      const reactToken = botConfig?.token ?? MM_ARCHITECT_TOKEN;
+
       // Add thinking reaction (signals: "I see your message")
       // Small delay gives the browser time to set up its reaction listener for the new post
       await new Promise(resolve => setTimeout(resolve, 1000));
       try {
         await mmFetch("POST", "/reactions", {
-          user_id: MM_ARCHITECT_USER_ID,
+          user_id: reactUserId,
           post_id: post.id,
           emoji_name: "thinking_face",
-        }, MM_ARCHITECT_TOKEN);
+        }, reactToken);
       } catch { /* ignore */ }
 
       // onBeforePost: fires just before response is posted — show typing indicator
       const onBeforePost = async () => {
         try {
-          await mmFetch("POST", `/users/${MM_ARCHITECT_USER_ID}/typing`, { channel_id: channel }, MM_ARCHITECT_TOKEN);
+          await mmFetch("POST", `/users/${reactUserId}/typing`, { channel_id: channel }, reactToken);
         } catch { /* ignore */ }
+        // Keep indicator visible for a moment before the response lands
+        await new Promise(resolve => setTimeout(resolve, 1500));
       };
 
       try {
-        await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost);
+        await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost, botConfig ?? undefined);
       } catch (err) {
         await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
         try {
@@ -508,11 +544,22 @@ export async function startMattermostBridge(): Promise<void> {
     console.warn("[mattermost] Could not fetch architect user ID:", (err as Error).message);
   }
 
-  // Discover bot user IDs so we can filter their messages
+  // Discover bot user IDs so we can filter their messages + build routing map
   try {
     const bots = await mmFetch("GET", "/bots?per_page=200");
+    const { getAllBots } = await import("./bots.js");
+    const botDefMap = new Map(getAllBots().map(b => [b.name, b.definition]));
     for (const bot of bots) {
       botUserIds.add(bot.user_id);
+      // Build routing map for bots that have a token + system_prompt
+      const botName: string = bot.username; // e.g. "betty"
+      const token = MM_BOT_TOKENS[botName];
+      const def = botDefMap.get(botName);
+      if (token && def?.system_prompt && bot.user_id !== MM_ARCHITECT_USER_ID) {
+        const displayName = botName.charAt(0).toUpperCase() + botName.slice(1);
+        botUserMap.set(bot.user_id, { name: botName, displayName, systemPrompt: def.system_prompt, token, userId: bot.user_id });
+        console.log(`[mattermost] Bot routing: ${displayName} → ${bot.user_id}`);
+      }
     }
     console.log(`[mattermost] Registered ${botUserIds.size} bot user IDs for filtering`);
   } catch (err) {
