@@ -122,6 +122,18 @@ export async function flowspecWorkflow(
   return ctx.vars;
 }
 
+// ── Transport helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Derive transport prefix from a reportChannelId.
+ * "mm:C123" → "mm", "C123" → undefined
+ */
+function getTransport(reportChannelId?: string): string | undefined {
+  if (!reportChannelId) return undefined;
+  const colon = reportChannelId.indexOf(':');
+  return colon === -1 ? undefined : reportChannelId.slice(0, colon);
+}
+
 // ── Step Execution ───────────────────────────────────────────────────────────
 
 async function executeSteps(ctx: FlowContext, steps: Step[]): Promise<void> {
@@ -165,7 +177,7 @@ const DEEP_PREFIX = 'Think very deeply. Take your time.\n\n';
 const DEEP_TIMEOUT = '45 minutes';
 
 async function executeAsk(ctx: FlowContext, step: AskStep): Promise<void> {
-  const channelId = resolveBot(ctx.botRegistry, step.bot);
+  const channelId = resolveBot(ctx.botRegistry, step.bot, getTransport(ctx.reportChannelId));
   const isDeep = ctx.vars.__deep === 'true';
   const prompt = (isDeep ? DEEP_PREFIX : '') + interpolate(ctx.vars, step.prompt);
   const dispatch = dispatchWithOptions(isDeep ? DEEP_TIMEOUT : step.timeout, step.retries);
@@ -213,7 +225,7 @@ async function executeSend(ctx: FlowContext, step: SendStep): Promise<void> {
   if (step.targetType === 'channel') {
     channelId = ctx.botRegistry[step.target] || step.target;
   } else {
-    channelId = resolveBot(ctx.botRegistry, step.target);
+    channelId = resolveBot(ctx.botRegistry, step.target, getTransport(ctx.reportChannelId));
   }
   await postStatus(channelId, message);
 }

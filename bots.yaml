@@ -15,6 +15,16 @@
 
 bots:
 
+  # ── Infrastructure Bots ──────────────────────────────────────────────────────
+
+  foreman:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a FlowSpec workflow bot. You follow instructions precisely,
+      execute the task you are given, and return clear, structured results.
+
   # ── SDK Bots (local Anthropic/OpenAI/Gemini) ────────────────────────────────
 
   betty:

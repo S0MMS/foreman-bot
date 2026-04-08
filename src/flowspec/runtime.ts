@@ -22,8 +22,18 @@ export function interpolate(vars: FlowVars, template: string): string {
 
 // ── Bot Registry ─────────────────────────────────────────────────────────────
 
-/** Resolve a bot name to a Slack channel ID. Throws if not found. */
-export function resolveBot(botRegistry: Record<string, string>, botName: string): string {
+/**
+ * Resolve a bot name to a channel ID.
+ *
+ * If `transport` is provided (e.g. "mm" for Mattermost), the registry is
+ * first checked for a transport-prefixed key ("mm:botName"). Falls back to
+ * the plain key for backwards compatibility.
+ */
+export function resolveBot(botRegistry: Record<string, string>, botName: string, transport?: string): string {
+  if (transport) {
+    const prefixedId = botRegistry[`${transport}:${botName}`];
+    if (prefixedId) return prefixedId;
+  }
   const channelId = botRegistry[botName];
   if (!channelId) {
     throw new Error(

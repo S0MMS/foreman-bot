@@ -25,8 +25,14 @@ export async function greet(name: string): Promise<string> {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-/** Post a status message to a Slack channel. */
+/** Post a status message to a channel (Slack or Mattermost via mm: prefix). */
 export async function postStatus(channelId: string, text: string): Promise<void> {
+  if (channelId.startsWith('mm:')) {
+    // postStatusMessage: tries bot token first, Architect fallback for report channels
+    const { postStatusMessage } = await import('../mattermost.js');
+    await postStatusMessage(channelId.slice(3), text);
+    return;
+  }
   const app = getSlackApp();
   await app.client.chat.postMessage({ channel: channelId, text });
 }
@@ -59,7 +65,7 @@ export async function postCompletion(channelId: string, startEpochMs: number): P
 
 /** Clear a bot channel's session so the next dispatch starts fresh. */
 export async function resetBotSession(channelId: string): Promise<void> {
-  clearSession(channelId);
+  clearSession(channelId.startsWith('mm:') ? channelId.slice(3) : channelId);
 }
 
 // ── File I/O ─────────────────────────────────────────────────────────────────
@@ -105,6 +111,24 @@ export async function dispatchToBot(
   channelId: string,
   prompt: string,
 ): Promise<string> {
+  // ── Mattermost transport ──────────────────────────────────────────────────
+  if (channelId.startsWith('mm:')) {
+    const mmChannelId = channelId.slice(3);
+    const lock = acquireChannelLock(channelId);
+    await lock.ready;
+    const heartbeat = setInterval(() => {
+      Context.current().heartbeat({ channelId, status: 'waiting' });
+    }, 30_000);
+    try {
+      const { processChannelMessageForFlowSpec } = await import('../mattermost.js');
+      return await processChannelMessageForFlowSpec(mmChannelId, prompt);
+    } finally {
+      clearInterval(heartbeat);
+      lock.release();
+    }
+  }
+
+  // ── Slack transport ───────────────────────────────────────────────────────
   const lock = acquireChannelLock(channelId);
   await lock.ready; // wait for any prior dispatch to this channel to finish
 

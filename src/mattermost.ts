@@ -49,6 +49,7 @@ let MM_TEAM_ID = "";
 let MM_BOT_TOKENS: Record<string, string> = {};
 let MM_ARCHITECT_TOKEN = "";
 let MM_ARCHITECT_USER_ID = "";
+let MM_FOREMAN_TOKEN = "";
 // Mattermost runs in Docker — it calls this URL when a button is clicked.
 // "localhost" inside Docker = the container, not the host. Use host.docker.internal to reach host.
 let MM_ACTION_URL = "http://host.docker.internal:3001";
@@ -76,7 +77,7 @@ async function identifyChannelBot(channelId: string): Promise<BotConfig | null> 
       }
     }
   } catch { /* ignore */ }
-  channelBotCache.set(channelId, null);
+  // Don't cache null — allow retries (bot may not be initialized on first call)
   return null;
 }
 
@@ -208,7 +209,7 @@ async function processChannelMessage(
   const name = state.name ?? "Foreman";
   const botToken = botConfig?.token;
 
-  // Tool approval: post interactive buttons
+  // Tool approval: post interactive buttons — uses explicit botToken, no defaults
   const onApprovalNeeded = async (
     toolName: string,
     input: Record<string, unknown>,
@@ -231,12 +232,13 @@ async function processChannelMessage(
             context: { action: "deny", channel },
           },
         },
-      ]).catch(() => {});
+      ], botToken).catch(() => {});
     });
   };
 
+  // Progress messages — uses explicit botToken, no defaults
   const onProgress = (toolName: string, input: Record<string, unknown>) => {
-    postMessage(channel, formatProgress(toolName, input)).catch(() => {});
+    postMessage(channel, formatProgress(toolName, input), botToken).catch(() => {});
   };
 
   // Create MCP server — pass null for Slack app (not used in MM bridge)
@@ -277,6 +279,48 @@ async function processChannelMessage(
   }
 
   return { result: result.result || "", sessionId: result.sessionId || "", cost: result.cost || 0, turns: result.turns || 0 };
+}
+
+/** Get the foreman bot token for FlowSpec dispatch. Throws if not configured. */
+export function getForemanToken(): string {
+  if (!MM_FOREMAN_TOKEN) {
+    throw new Error("Foreman bot token not configured. Add 'foreman' to mattermostBotTokens in config.json.");
+  }
+  return MM_FOREMAN_TOKEN;
+}
+
+// ── FlowSpec integration ──────────────────────────────────────────────────────
+
+/**
+ * FlowSpec dispatch — runs a Claude session in a Mattermost channel.
+ * Uses the foreman bot token exclusively. No per-bot routing, no defaults.
+ * Mirrors Slack: one bot token, posts everything.
+ */
+export async function processChannelMessageForFlowSpec(channelId: string, prompt: string): Promise<string> {
+  const token = getForemanToken();
+  await postMessage(channelId, `📋 *FlowSpec dispatch:*\n${prompt}`, token);
+  // Build a synthetic BotConfig so processChannelMessage uses the foreman token
+  // throughout all closures (onProgress, onApprovalNeeded, response posting).
+  // System prompt and model will come from the channel's session config (workspace).
+  const foremanConfig: BotConfig = {
+    name: "foreman",
+    displayName: "Foreman",
+    systemPrompt: "",  // no override — use channel session's system prompt
+    token,
+    userId: "",
+  };
+  const result = await processChannelMessage(channelId, prompt, '', true, undefined, foremanConfig);
+  return result.result;
+}
+
+/**
+ * Post a status/send message to a Mattermost channel using the foreman token.
+ * Used by postStatus activity for all mm: channels (both bot channels and
+ * report channels). The foreman bot must be a member of all workspace channels.
+ */
+export async function postStatusMessage(channelId: string, text: string): Promise<void> {
+  const token = getForemanToken();
+  await postMessage(channelId, text, token);
 }
 
 // ── /f command handler ────────────────────────────────────────────────────────
@@ -382,6 +426,83 @@ async function handleCommand(channel: string, text: string, userId: string, botT
       break;
     }
 
+    case "run": {
+      const flowFile = args[1];
+      if (!flowFile || !flowFile.endsWith(".flow")) {
+        await respond("Usage: `/f run <file.flow> [workflow_name] [key=value ...]`");
+        return;
+      }
+      try {
+        const { resolve, isAbsolute } = await import("path");
+        const { readFileSync, existsSync } = await import("fs");
+        const { parseFlowSpec } = await import("./flowspec/parser.js");
+        const { loadBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");
+        const { getTemporalClient } = await import("./temporal/client.js");
+        const { flowspecWorkflow } = await import("./temporal/workflows.js");
+
+        const session = getState(channel);
+        const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, "flows", flowFile);
+        if (!existsSync(filePath)) {
+          await respond(`File not found: \`${filePath}\``);
+          return;
+        }
+        const source = readFileSync(filePath, "utf-8");
+        const workflows = parseFlowSpec(source);
+        const workflowName = args[2] || workflows[0].name;
+        const workflow = workflows.find((w: any) => w.name === workflowName);
+        if (!workflow) {
+          await respond(`Workflow "${workflowName}" not found.\nAvailable: ${workflows.map((w: any) => w.name).join(", ")}`);
+          return;
+        }
+
+        const botRegistry = loadBotRegistry();
+        if (Object.keys(botRegistry).length === 0) {
+          await respond(`No bots registered. Check \`${getRegistryPath()}\`.`);
+          return;
+        }
+
+        const inputs: Record<string, string> = {};
+        for (const inp of workflow.inputs || []) {
+          if (inp.defaultValue !== undefined) inputs[inp.name] = inp.defaultValue;
+        }
+        for (const arg of args.slice(3)) {
+          const eq = arg.indexOf("=");
+          if (eq > 0) inputs[arg.slice(0, eq)] = arg.slice(eq + 1);
+        }
+
+        const client = await getTemporalClient();
+        const workflowId = `flowspec-${workflowName.replace(/\s+/g, "-")}-${Date.now()}`;
+        await client.workflow.start(flowspecWorkflow, {
+          args: [workflows, workflowName, inputs, botRegistry, `mm:${channel}`],
+          taskQueue: "foreman",
+          workflowId,
+        });
+
+        await respond(`**FlowSpec started**\n- File: \`${flowFile}\`\n- Workflow: \`${workflowName}\`\n- ID: \`${workflowId}\`\n\nUse \`/f check ${workflowId}\` to check status.`);
+      } catch (err) {
+        await respond(`FlowSpec error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      break;
+    }
+
+    case "check": {
+      const workflowId = args[1];
+      if (!workflowId) {
+        await respond("Usage: `/f check <workflowId>`");
+        return;
+      }
+      try {
+        const { getTemporalClient } = await import("./temporal/client.js");
+        const client = await getTemporalClient();
+        const handle = client.workflow.getHandle(workflowId);
+        const desc = await handle.describe();
+        await respond(`**Workflow \`${workflowId}\`**\n- Status: \`${desc.status.name}\`\n- Started: ${desc.startTime?.toISOString() ?? "unknown"}`);
+      } catch (err) {
+        await respond(`Check error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      break;
+    }
+
     default: {
       await respond(
         "**Available commands:**\n" +
@@ -392,7 +513,9 @@ async function handleCommand(channel: string, text: string, userId: string, botT
         "- `/f new` — reset session\n" +
         "- `/f stop` — abort current query\n" +
         "- `/f auto-approve on|off` — toggle tool auto-approval\n" +
-        "- `/f plugin <path>` — load a plugin directory"
+        "- `/f plugin <path>` — load a plugin directory\n" +
+        "- `/f run <file.flow> [workflow_name]` — run a FlowSpec workflow\n" +
+        "- `/f check <workflowId>` — check FlowSpec workflow status"
       );
       break;
     }
@@ -547,7 +670,7 @@ async function registerSlashCommand(): Promise<void> {
       display_name: "Foreman",
       description: "Control your Foreman bot session",
       auto_complete: true,
-      auto_complete_hint: "session|model|cwd|new|stop|name|plugin|auto-approve",
+      auto_complete_hint: "session|model|cwd|new|stop|name|plugin|auto-approve|run|check",
       auto_complete_desc: "Foreman bot commands",
     });
     console.log("[mattermost] Registered /f slash command");
@@ -577,11 +700,19 @@ export async function startMattermostBridge(): Promise<void> {
   MM_TEAM_ID = (config as any).mattermostTeamId;
   MM_BOT_TOKENS = (config as any).mattermostBotTokens || {};
   MM_ARCHITECT_TOKEN = MM_BOT_TOKENS.architect || MM_ADMIN_TOKEN;
+  MM_FOREMAN_TOKEN = MM_BOT_TOKENS.foreman || "";
   if (config.mattermostActionUrl) MM_ACTION_URL = config.mattermostActionUrl;
 
   if (!MM_URL || !MM_ADMIN_TOKEN) {
     console.log("[mattermost] No Mattermost config found — bridge not started");
     return;
+  }
+
+  // Validate foreman token — required for FlowSpec
+  if (MM_FOREMAN_TOKEN) {
+    console.log("[mattermost] Foreman bot token loaded (FlowSpec infrastructure)");
+  } else {
+    console.warn("[mattermost] No foreman bot token — FlowSpec Mattermost dispatch will fail");
   }
 
   // Discover architect bot's user ID (needed for reactions + typing indicator)
