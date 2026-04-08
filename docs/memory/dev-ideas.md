@@ -561,54 +561,7 @@ When done, write ~/mfp-sitemap/sitemap.json — a flat index of every screen fou
 
 ## 11. MFP iOS Sync Replacement — Architecture Options
 - **Status**: Exploring — 2 options under consideration
-- **Constraints**: (1) offline-first reads AND writes, (2) automatic sync with no client sync code, (3) mobile devs write GraphQL not SQL
-- **Context**: QueryEnvoy is abandoned. Backend is entirely on AWS. Local mobile DB is ~60 tables.
-
-### Option A: PowerSync (bidirectional) + Apollo Client + Postgres bridge
-- **Local store**: SQLite — keeps existing schema, no local DB migration
-- **Sync engine**: PowerSync is **bidirectional**. Reads and writes both go through local SQLite. Writes are queued by PowerSync and uploaded to the backend automatically when online.
-- **Backend bridge**: PowerSync syncs to **Postgres** (its native target). A backend process keeps each of 16 Postgres shards in sync with the corresponding MySQL shard. MySQL remains source of truth.
-- **GraphQL**: Apollo Client wraps the local SQLite as a GraphQL layer. iOS devs write GraphQL queries/mutations against Apollo; Apollo routes them to local SQLite via `@client` resolvers. No AppSync needed on the read/write path — Apollo is purely a local GraphQL interface.
-- **Architecture**:
-  ```
-  iOS SQLite  ←──  PowerSync  ←──→  Postgres (1 of 16)  ←──→  MySQL shard
-       ↕
-  Apollo Client (@client resolvers)
-       ↕
-  iOS developer writes GraphQL
-  ```
-- **Read flow**: `Apollo @client query → local resolver → PowerSync SQLite (always offline)`
-- **Write flow**: `Apollo @client mutation → PowerSync SQLite (instant) → PowerSync upload queue → Postgres → MySQL`
-- **Pros**: Preserves existing SQLite schema. Bidirectional sync handled automatically. iOS devs use GraphQL, never raw SQL. Offline-first reads AND writes.
-- **Cons**: Postgres-to-MySQL bridge is a new backend component to build/maintain. Local Apollo resolver layer requires upfront work (~60 tables). PowerSync Swift SDK recently reached GA (early 2025) — relatively new.
-- **Key unknown**: Scale and performance of PowerSync across 16 shards with large user base.
-
-### Option B: AWS Amplify DataStore + AppSync + DynamoDB bridge
-- **Local store**: Amplify DataStore (manages its own local DB — replaces existing SQLite)
-- **Sync**: Fully automatic — DataStore syncs with AppSync/DynamoDB in background, offline writes queued, conflict resolution built in
-- **GraphQL**: Amplify generates Swift model classes from GraphQL schema. Devs use Swift objects — no raw SQL, no query strings.
-- **Architecture**:
-  ```
-  iOS (Amplify local DB)  ←──→  AppSync  ←──→  DynamoDB (1 of 16)  ←──→  MySQL shard
-  ```
-- **Read flow**: `Amplify.DataStore.query() → local store (always offline)`
-- **Write flow**: `Amplify.DataStore.save() → local store (instant) → AppSync → DynamoDB → backend sync → MySQL`
-- **Pros**: One unified framework handles everything. Cleanest developer experience. AWS-native end to end. DynamoDB is AppSync's native target — no Lambda bridge needed on the sync path.
-- **Cons**: Replaces local SQLite entirely (migration required for ~60 tables). Backend process needed to sync DynamoDB → MySQL (same pattern as Option A's Postgres → MySQL bridge). More opinionated/less flexible.
-- **Backend**: AWS AppSync + DynamoDB, with a backend sync process → MySQL shards
-
-### Comparison
-| | Option A | Option B |
-|---|---|---|
-| Offline reads | ✅ | ✅ |
-| Offline writes | ✅ | ✅ |
-| Auto sync | ✅ | ✅ |
-| GraphQL for devs | ✅ | ✅ |
-| Keeps existing SQLite | ✅ | ❌ |
-| Cloud sync target | Postgres | DynamoDB |
-| MySQL bridge | Postgres→MySQL (backend) | DynamoDB→MySQL (backend) |
-| Migration risk | Low (SQLite stays) | Medium (new local DB) |
-| AWS-native | ✅ | ✅ |
+- **Full details**: See [project_mfp_sync.md](project_mfp_sync.md) — PowerSync vs Amplify DataStore comparison, architecture diagrams, and constraints
 
 ## 10. Delphi Phase Status Improvements
 - **Status**: Queued
