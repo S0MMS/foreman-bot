@@ -323,10 +323,31 @@ export async function postStatusMessage(channelId: string, text: string): Promis
   await postMessage(channelId, text, token);
 }
 
+// ── Shell-style argument parser (quote-aware) ────────────────────────────────
+
+function parseShellArgs(text: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inDouble = false;
+  let inSingle = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (/\s/.test(ch) && !inDouble && !inSingle) {
+      if (current) { result.push(current); current = ""; }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) result.push(current);
+  return result;
+}
+
 // ── /f command handler ────────────────────────────────────────────────────────
 
 async function handleCommand(channel: string, text: string, userId: string, botToken?: string): Promise<void> {
-  const args = text.replace(/^\/f\s+/, "").trim().split(/\s+/);
+  const args = parseShellArgs(text.replace(/^\/f\s+/, "").trim());
   const subcommand = args[0]?.toLowerCase();
   const respond = (msg: string) => postMessage(channel, msg, botToken);
 
@@ -427,9 +448,19 @@ async function handleCommand(channel: string, text: string, userId: string, botT
     }
 
     case "run": {
+      // Syntax:
+      //   /f run <file.flow> [key=value ...]           — auto-selects first workflow
+      //   /f run <file.flow> --name "Workflow Name" [key=value ...]
+      //   /f run <file.flow> topic=the meaning of life — unquoted multi-word values work
       const flowFile = args[1];
       if (!flowFile || !flowFile.endsWith(".flow")) {
-        await respond("Usage: `/f run <file.flow> [workflow_name] [key=value ...]`");
+        await respond(
+          "**Usage:**\n" +
+          "- `/f run <file.flow>` — run the workflow\n" +
+          "- `/f run <file.flow> key=value` — run with inputs\n" +
+          "- `/f run <file.flow> --name \"Name\" key=value` — pick a specific workflow\n\n" +
+          "Multi-word values: `topic=\"the meaning of life\"` or `topic=the meaning of life`"
+        );
         return;
       }
       try {
@@ -448,7 +479,23 @@ async function handleCommand(channel: string, text: string, userId: string, botT
         }
         const source = readFileSync(filePath, "utf-8");
         const workflows = parseFlowSpec(source);
-        const workflowName = args[2] || workflows[0].name;
+
+        // Parse remaining args (after "run" and the flow file)
+        const restArgs = args.slice(2);
+        let workflowName: string | undefined;
+
+        // Check for --name flag
+        const nameIdx = restArgs.indexOf("--name");
+        if (nameIdx !== -1 && nameIdx + 1 < restArgs.length) {
+          workflowName = restArgs[nameIdx + 1];
+          restArgs.splice(nameIdx, 2); // remove --name and its value
+        }
+
+        // Auto-select first workflow if no --name provided
+        if (!workflowName) {
+          workflowName = workflows[0].name;
+        }
+
         const workflow = workflows.find((w: any) => w.name === workflowName);
         if (!workflow) {
           await respond(`Workflow "${workflowName}" not found.\nAvailable: ${workflows.map((w: any) => w.name).join(", ")}`);
@@ -461,13 +508,22 @@ async function handleCommand(channel: string, text: string, userId: string, botT
           return;
         }
 
+        // Build inputs: start with defaults, then override with user args.
+        // Supports: key=value, key="multi word value", key=multi word value (greedy)
         const inputs: Record<string, string> = {};
         for (const inp of workflow.inputs || []) {
           if (inp.defaultValue !== undefined) inputs[inp.name] = inp.defaultValue;
         }
-        for (const arg of args.slice(3)) {
+        let lastKey: string | null = null;
+        for (const arg of restArgs) {
           const eq = arg.indexOf("=");
-          if (eq > 0) inputs[arg.slice(0, eq)] = arg.slice(eq + 1);
+          if (eq > 0) {
+            lastKey = arg.slice(0, eq);
+            inputs[lastKey] = arg.slice(eq + 1);
+          } else if (lastKey) {
+            // Append to previous key's value (unquoted multi-word)
+            inputs[lastKey] += " " + arg;
+          }
         }
 
         const client = await getTemporalClient();
@@ -514,7 +570,7 @@ async function handleCommand(channel: string, text: string, userId: string, botT
         "- `/f stop` — abort current query\n" +
         "- `/f auto-approve on|off` — toggle tool auto-approval\n" +
         "- `/f plugin <path>` — load a plugin directory\n" +
-        "- `/f run <file.flow> [workflow_name]` — run a FlowSpec workflow\n" +
+        "- `/f run <file.flow> [key=value ...]` — run a FlowSpec workflow\n" +
         "- `/f check <workflowId>` — check FlowSpec workflow status"
       );
       break;

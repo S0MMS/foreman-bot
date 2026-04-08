@@ -200,10 +200,11 @@ workflow "Name"
 
 ### Multiple Workflows in One File
 
-A `.flow` file can contain multiple `workflow` blocks. The run command specifies which to invoke:
+A `.flow` file can contain multiple `workflow` blocks. By default, the first workflow is selected. To invoke a specific one:
 
 ```
 /cc run myfile.flow "Workflow Name"
+/f run myfile.flow --name "Workflow Name"
 ```
 
 ### Sub-Workflow with Capture
@@ -438,10 +439,29 @@ Register a new bot: `/cc bots add <name> #channel-name`
 
 ### Workflow Sources
 
-- **File:** `/cc run /absolute/path/to/workflow.flow "Workflow Name"`
+**Slack (`/cc run`):**
+- **File:** `/cc run workflow.flow "Workflow Name" key=value`
 - **Named canvas:** `/cc run "Canvas Title" "Workflow Name"`
 - **Default canvas:** `/cc run canvas "Workflow Name"`
 - **List canvases:** `/cc canvas list`
+
+**Mattermost (`/f run`):**
+- **File:** `/f run workflow.flow key=value`
+- Auto-selects the first workflow in the file (no name needed for single-workflow files)
+- Disambiguate with `--name`: `/f run multi.flow --name "Workflow Name"`
+
+### Input Parameters
+
+Inputs declared in `inputs:` can be overridden with `key=value` pairs:
+
+```
+/f run hello-world.flow topic=cats
+/f run hello-world.flow topic=the meaning of life
+/f run hello-world.flow topic="the meaning of life"
+/f run peer-review.flow topic="why tabs beat spaces"
+```
+
+Multi-word values work both quoted and unquoted. Unquoted values are greedy — everything after `key=` until the next `key=` is captured as the value.
 
 ### Runtime Flags
 
