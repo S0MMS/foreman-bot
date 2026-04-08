@@ -21,7 +21,7 @@ A rich, structured document capturing:
 - What he'd approve/reject without asking
 - His technical context (iOS dev, tools, etc.)
 
-**Seed material already exists**: the memory files in `~/.claude/projects/.../memory/`
+**Seed material already exists**: the shared memory files in `docs/memory/` (in the Foreman repo)
 
 ### Layer 2: The Orchestrator Agent (the "Virtual Chris" brain)
 A Claude instance that:

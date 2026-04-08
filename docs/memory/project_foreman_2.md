@@ -14,8 +14,8 @@ type: project
 
 ## Current Health: ✅ STABLE — FlowSpec /f run parsing fixed
 
-**Last known good commit:** `c1411f4` (pre-parsing fix; new commit pending)
-**Rollback:** `git checkout c1411f4 -- src/mattermost.ts && npm run build`
+**Last known good commit:** `dea9d03`
+**Rollback:** `git checkout 7a73338 -- src/mattermost.ts && npm run build`
 
 ---
 
@@ -109,28 +109,7 @@ If Foreman stops responding to every other Slack message, check `~/.foreman/fore
 
 ## Emergency Recovery — If Foreman Won't Start
 
-```bash
-# 0. Stop launchd supervisor first
-launchctl unload ~/Library/LaunchAgents/com.foreman.bot.plist
-
-# 1. Kill anything on port 3001
-lsof -ti :3001 | xargs kill -9
-
-# 2. Revert to last known good
-cd /Users/chris.shreve/claude-slack-bridge
-git log --oneline -5
-git checkout <commit> -- <files>
-
-# 3. Rebuild and smoke test
-npm run build
-node dist/index.js   # confirm "Foreman is running" then Ctrl-C
-
-# 4. Re-enable launchd
-launchctl load ~/Library/LaunchAgents/com.foreman.bot.plist
-```
-
-**If Foreman starts but is unresponsive in Slack (hung tool call):**
-Edit `~/.foreman/sessions.json`, set `sessionId: null` for the affected channel. Or `/cc new` in that channel.
+See [dead_man_protocol.md](dead_man_protocol.md) — Recovery Protocol section for full copy-paste-ready steps.
 
 ---
 
@@ -174,8 +153,8 @@ Edit `~/.foreman/sessions.json`, set `sessionId: null` for the affected channel.
 - Slack bridge runs in parallel — both transports work simultaneously
 
 ### Still TODO
-- [ ] **Verify FlowSpec workflows still run** — confirm end-to-end after all the Mattermost refactoring
-- [ ] **Migrate memory files into Foreman** — move `~/.claude/projects/.../memory/` into `claude-slack-bridge/docs/memory/`
+- [x] **Verify FlowSpec workflows still run** — confirmed end-to-end in Mattermost (hello-world.flow + peer-review.flow)
+- [x] **Migrate memory files into Foreman** — done (2026-04-08), now in `docs/memory/`
 - [ ] Port canvas commands to Mattermost
 - [ ] Port quorum/delphi/dispatch commands
 - [ ] MCP tools (PostMessage, ReadChannel) — add Mattermost variants

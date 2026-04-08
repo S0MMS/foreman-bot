@@ -1,7 +1,7 @@
 # Development Ideas
 
 ## 22. Foreman UI Tech Stack — React + Tailwind + shadcn/ui
-- **Status**: Decision made, not yet started
+- **Status**: Partially shipped — React + Vite + Tailwind live in `ui/`. TypeScript and shadcn/ui not adopted.
 - **Concept**: When building `foreman ui`, use Vite + React + TypeScript + Tailwind + shadcn/ui. The primary design constraint is that the UI must be fully buildable by a Foreman bot — no hand-written HTML ever.
 
 ### Why This Stack
@@ -26,7 +26,7 @@ No framework needed for the aesthetic — Tailwind utility classes are sufficien
 ---
 
 ## 21. bots.yaml — Bot Registry as Single Source of Truth
-- **Status**: Top priority concept — design complete, not yet started
+- **Status**: Shipped — `bots.yaml` exists, `src/bots.ts` parses it, topics auto-created on startup
 - **Concept**: A declarative config file that defines all bots — their name, model, provider, and system prompt. Everything in the Foreman ecosystem derives from this file. Replaces the current implicit model-per-Slack-channel approach with explicit, version-controlled bot identity.
 
 ### The Problem Today
@@ -74,7 +74,7 @@ No Slack app. No manual `/cc model` per channel. Bots are reproducible across ma
 ---
 
 ## 20. Slack-Free Foreman — Kafka as Bot Transport, CLI as Interface
-- **Status**: Top priority concept — design complete, not yet started
+- **Status**: Partially shipped — web UI live (`ui/`), Kafka transport built, Mattermost bridge live. CLI commands (`foreman ask`, `foreman flow`, `foreman watch`) not yet built.
 - **Concept**: Decouple Foreman from Slack entirely, so developers can run FlowSpec workflows and talk to bots using only a CLI + Redpanda + Temporal. Slack becomes purely optional — an add-on for teams that want it, not a prerequisite.
 
 ### The `foreman ui` Local Web App
@@ -159,7 +159,7 @@ npm run dev         # starts Foreman (Slack bridge + bot runtime)
 ---
 
 ## 19. Kafka-Backed FlowSpec — Enterprise-Scale Bot Communication
-- **Status**: Top priority concept — design complete, not yet started
+- **Status**: Shipped — Kafka transport built in `src/kafka.ts`, bot consumers run on startup (Phase 2 of Foreman 2.0)
 - **Concept**: Replace (or augment) Slack as the bot-to-bot communication layer with Kafka, while keeping Slack as the human observation and approval plane. This is the path to scaling FlowSpec beyond what Slack can support, and the natural precursor to deep AgentCore integration.
 
 ### The Core Insight
@@ -447,7 +447,7 @@ AgentCore InvokeAgent (AI execution)
 - **Cedar**: Open source policy language from AWS. Natural language → Cedar is supported. Policies are human-readable.
 
 ## 14. Kafka as FlowSpec Message Bus
-- **Status**: Queued
+- **Status**: Shipped (superseded by #19 — actual topic naming is `{botName}.inbox` / `{botName}.outbox`)
 - **Concept**: Replace (or augment) Slack as the communication bus between FlowSpec bots with Kafka. Currently `dispatchToBot` posts to a Slack channel and polls for the response — Kafka would make this faster, more durable, and more scalable.
 - **Architecture**:
   - One topic per bot: `foreman.bot.{channelId}.in` (prompts) and `foreman.bot.{channelId}.out` (responses)
@@ -462,8 +462,8 @@ AgentCore InvokeAgent (AI execution)
 - **Rough effort**: 2-3 days
 
 ## 13. Back Up Ideation/Memory Files to Git
-- **Status**: Queued
-- **Concept**: The `~/.claude/projects/.../memory/` files (dev-ideas.md, project_mfp_sync.md, etc.) live outside any git repo. If the Mac dies or the directory is wiped, all accumulated context is gone.
+- **Status**: Done (2026-04-08) — memory files migrated to `docs/memory/` in the Foreman repo, version-controlled and pushed.
+- **Original concept**: The `~/.claude/projects/.../memory/` files (dev-ideas.md, project_mfp_sync.md, etc.) lived outside any git repo. If the Mac dies or the directory is wiped, all accumulated context is gone.
 - **Solution**: Add a git repo to the memory directory (or a dedicated `~/foreman-memory` repo), commit the markdown files, and push to GitHub (private repo). Could be as simple as a cron or post-session hook that auto-commits and pushes.
 - **Options**:
   1. `git init` in the memory dir, push to a private GitHub repo

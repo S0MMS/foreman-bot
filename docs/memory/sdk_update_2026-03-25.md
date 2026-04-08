@@ -1,11 +1,11 @@
 ---
 name: SDK Update 2026-03-25
-description: Pending update of @anthropic-ai/claude-agent-sdk from 0.2.70 to 0.2.83
+description: Completed update of @anthropic-ai/claude-agent-sdk from 0.2.70 to 0.2.83
 type: project
 ---
 
 ## Status
-Pending — about to be executed.
+Done — SDK updated to 0.2.83. The `delete process.env.CLAUDECODE` workaround in `src/index.ts` is still in place (not yet confirmed unnecessary).
 
 ## What
 Updating `@anthropic-ai/claude-agent-sdk` from `0.2.70` → `0.2.83` in `/Users/chris.shreve/claude-slack-bridge`.

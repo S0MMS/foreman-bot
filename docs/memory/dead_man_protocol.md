@@ -40,7 +40,7 @@ kill %1
 - `tsc` passing does not mean the process starts — Express 5 route syntax, ESM/CJS issues, and similar errors are runtime-only
 
 ### Step 3 — Dead Man snapshot (NON-NEGOTIABLE)
-Update `memory/project_foreman_2.md` with:
+Update `docs/memory/project_foreman_2.md` (in the repo root) with:
 - Status: `⚠️ REBOOTING — if Foreman is down, read this`
 - Which files were changed
 - The last-known-good commit hash
@@ -49,7 +49,7 @@ Update `memory/project_foreman_2.md` with:
 This step is what makes recovery possible. If it's skipped, the next Claude instance is blind.
 
 ### Step 4 — Write session handoff note
-Write a summary of the current conversation to `claude-slack-bridge/docs/session-handoff.md`:
+Write a summary of the current conversation to `docs/session-handoff.md` (in the repo root):
 - What we were working on
 - Where we left off
 - Any decisions made or context that won't survive the reboot
@@ -87,7 +87,7 @@ launchctl unload ~/Library/LaunchAgents/com.foreman.bot.plist
 lsof -ti :3001 | xargs kill -9
 
 # 2. Read the Dead Man snapshot
-cat ~/.claude/projects/-Users-chris-shreve/memory/project_foreman_2.md
+cat /Users/chris.shreve/claude-slack-bridge/docs/memory/project_foreman_2.md
 
 # 3. Find the last-known-good commit in the snapshot
 cd /Users/chris.shreve/claude-slack-bridge

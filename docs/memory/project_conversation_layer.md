@@ -10,7 +10,7 @@ type: project
 
 **Original problem:** The Foreman React UI stored all messages in React state (browser memory). Refresh = gone. No pagination, no multi-participant conversations, no persistence.
 
-**How to apply:** This is the architectural blueprint for Phase 5. All implementation should follow this design. Do NOT add SQLite or any other database — Kafka is the conversation store.
+**How to apply:** This design is superseded. Mattermost handles conversation storage. The Kafka log topic concept below may still be useful for cross-platform replay or audit trails.
 
 ## Design Decisions (agreed 2026-04-06)
 

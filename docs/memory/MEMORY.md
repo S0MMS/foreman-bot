@@ -7,9 +7,8 @@ This is the shared knowledge base for all Foreman bots. Every Claude Code sessio
 - [Dead Man Protocol](dead_man_protocol.md) — mandatory 7-step reboot safety protocol
 - [Kafka Rule](feedback_kafka_all_bot_traffic.md) — all bot traffic must flow through Kafka
 - [Conversation Layer](project_conversation_layer.md) — superseded by Mattermost, preserved for reference
-- [Foreman Bot Problem](project_foreman_bot_problem.md) — conversation loss bug (resolved by Mattermost)
-- [SDK Update](sdk_update_2026-03-25.md) — Claude Agent SDK version history
-- [SessionId Fix](fix_sessionid_persistence.md) — non-Anthropic adapter persistence fix
+- [SDK Update](sdk_update_2026-03-25.md) — Claude Agent SDK version history (completed)
+- [SessionId Fix](fix_sessionid_persistence.md) — non-Anthropic adapter persistence fix (completed, historical)
 
 ## Features & Roadmap
 - [Dev Ideas](dev-ideas.md) — roadmap and feature ideas

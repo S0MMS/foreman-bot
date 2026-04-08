@@ -1,8 +1,10 @@
 ---
 name: setSessionId fix for non-Anthropic adapters
-description: Fix for Gemini/OpenAI adapters losing session memory — sessionId returned by start()/resume() was never saved back to SessionState
+description: COMPLETED fix for Gemini/OpenAI adapters losing session memory — historical record of the bug and solution
 type: project
 ---
+
+> **Status: FIXED** — Applied in both `slack.ts` and `mattermost.ts`. Committed 373c524. Kept here as historical reference.
 
 ## Problem
 Non-Anthropic adapters (Gemini, OpenAI) had no session memory. `state.sessionId` was always null, so every message called `start()` instead of `resumeSession()`. For Gemini, `start()` clears history with `this.histories.set(channelId, [])` — so every message started fresh.
