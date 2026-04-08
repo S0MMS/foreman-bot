@@ -4,23 +4,24 @@ This file is automatically loaded by Claude Code when the working directory is s
 
 ## Memory System
 
-All persistent memory (project status, protocols, user preferences) lives at:
+Shared project knowledge (protocols, status, references, architecture decisions) lives in this repo:
 
 ```
-/Users/chris.shreve/.claude/projects/-Users-chris-shreve/memory/
+docs/memory/MEMORY.md          — index of all shared memory files
+docs/session-handoff.md        — what was happening in the last session
 ```
 
-Read the index first:
+Key files:
+- `docs/memory/project_foreman_2.md` — Foreman 2.0 status, phases, what's been built
+- `docs/memory/dead_man_protocol.md` — mandatory self-modification safety protocol (also summarized below)
+- `docs/memory/feedback_kafka_all_bot_traffic.md` — all bot traffic must flow through Kafka
+
+Personal preferences for Chris Shreve live at:
 ```
 /Users/chris.shreve/.claude/projects/-Users-chris-shreve/memory/MEMORY.md
 ```
 
-Key files to know about:
-- `project_foreman_2.md` — Foreman 2.0 status, phases, what's been built
-- `dead_man_protocol.md` — mandatory self-modification safety protocol (also summarized below)
-- `docs/session-handoff.md` (in this repo) — what was happening in the last session
-
-When asked about ongoing projects, protocols, or context from previous conversations — read the memory files. Do not guess from CLAUDE.md alone.
+When asked about ongoing projects, protocols, or context from previous conversations — read the shared memory files. Do not guess from CLAUDE.md alone.
 
 ---
 
