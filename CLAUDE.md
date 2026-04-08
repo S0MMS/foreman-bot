@@ -27,37 +27,63 @@ When asked about ongoing projects, protocols, or context from previous conversat
 
 ## What Foreman Is
 
-Foreman is a Slack bot that bridges AI agent sessions into Slack channels. Each Slack channel gets its own independent session with its own model, working directory, conversation history, and persona name. Users chat with AI agents from Slack; Foreman routes messages bidirectionally.
+Foreman is a multi-transport AI agent bridge that connects chat platforms (Slack, Mattermost) to AI agent sessions. Each channel gets its own independent session with its own model, working directory, conversation history, and persona name. Users chat with AI agents from Slack or Mattermost; Foreman routes messages bidirectionally.
 
 - **npm package**: `foreman-bot` (published to npm)
 - **Binary**: `foreman` (run with `npx foreman-bot` or `foreman` after install)
 - **Runtime**: Node.js ≥18, TypeScript compiled to `dist/`
+- **Transports**: Slack (Socket Mode) + Mattermost (WebSocket) running in parallel
 
 ## Repo Structure
 
 ```
 src/
-  index.ts          — Entry point: starts Bolt app, loads sessions, starts Temporal worker
-  slack.ts          — All Slack event handlers: messages, /cc commands, approve/deny buttons
-  claude.ts         — Claude Agent SDK integration: startSession, resumeSession, abortCurrentQuery
-  session.ts        — Per-channel state management with disk persistence (~/.foreman/sessions.json)
-  types.ts          — Shared types: SessionState, MODEL_ALIASES, AUTO_APPROVE_TOOLS
-  config.ts         — Config loading from ~/.foreman/config.json (tokens, defaultCwd, API keys)
-  format.ts         — Markdown↔Slack formatting, message chunking, tool request display
-  init.ts           — Interactive setup wizard (foreman init)
-  canvas.ts         — Canvas fetch/append helpers (Slack Files API)
-  mcp-canvas.ts     — MCP server exposing canvas tools + channel tools to agents
+  index.ts            — Entry point: starts Slack/Mattermost, loads sessions, bots, Kafka, Temporal
+  slack.ts            — Slack event handlers: messages, /cc commands, approve/deny buttons
+  mattermost.ts       — Mattermost WebSocket bridge: messages, /f commands, tool approval
+  claude.ts           — Claude Agent SDK integration: startSession, resumeSession, abortCurrentQuery
+  session.ts          — Per-channel state management with disk persistence (~/.foreman/sessions.json)
+  types.ts            — Shared types: SessionState, MODEL_ALIASES, AUTO_APPROVE_TOOLS
+  config.ts           — Config loading from ~/.foreman/config.json (tokens, API keys)
+  format.ts           — Markdown↔Slack formatting, message chunking, tool request display
+  init.ts             — Interactive setup wizard (foreman init)
+  canvas.ts           — Canvas fetch/append helpers (Slack Files API)
+  canvases.ts         — Canvas persistence to ~/.foreman/canvases.json
+  mcp-canvas.ts       — MCP server ("foreman-toolbelt") exposing all tools to agents
+  kafka.ts            — KafkaJS client, topic management, bot consumers, callBot()
+  bots.ts             — bots.yaml parser, bot registry, roster tree, status SSE
+  bot-status.ts       — Bot status tracking (online/offline/busy)
+  jira.ts             — Jira Cloud REST API helpers
+  confluence.ts       — Confluence Cloud REST API helpers
+  github.ts           — GitHub REST API helpers
+  workspaces.ts       — Workspace management (scoped bot environments)
+  roster-overrides.ts — Bot→folder overrides for UI roster
+  ui-api.ts           — Express REST routes for the web UI
+  ui-claude.ts        — WebSocket Architect handler for the web UI
+  webhook.ts          — HTTP + WebSocket server on port 3001
+  flowspec/
+    ast.ts            — FlowSpec AST type definitions
+    parser.ts         — Recursive descent parser (.flow text → AST)
+    compiler.ts       — AST interpreter (executes FlowSpec via Temporal activities)
+    runtime.ts        — Bot resolution, transport-aware dispatch helpers
+    registry.ts       — Bot registry loader (~/.foreman/bots.json)
   temporal/
-    workflows.ts    — Temporal workflow definitions (durable, replayable)
-    activities.ts   — Temporal activities (actual work: dispatch bots, call APIs)
-    worker.ts       — Temporal worker: polls server, executes workflows + activities
-    client.ts       — Temporal client helper: start workflow executions from Foreman
+    workflows.ts      — Temporal workflow definitions (durable, replayable)
+    activities.ts     — Temporal activities (dispatch bots, post status, reset sessions)
+    worker.ts         — Temporal worker: polls server, executes workflows + activities
+    client.ts         — Temporal client helper: start workflow executions
+    slack-context.ts  — Slack-specific Temporal context helpers
   adapters/
-    index.ts        — Adapter registry: maps vendor name → AgentAdapter instance
-    OpenAIAdapter.ts — OpenAI chat completions agentic loop (exports TOOLS, APPROVAL_REQUIRED, executeTool)
-    GeminiAdapter.ts — Google Gemini agentic loop (reuses executeTool from OpenAIAdapter)
-dist/               — Compiled output (gitignored, built by tsc)
-slack-manifest.json — Slack app manifest for bot setup
+    AgentAdapter.ts   — AgentAdapter interface definition
+    AnthropicAdapter.ts — Claude Agent SDK adapter (wraps claude.ts)
+    OpenAIAdapter.ts  — OpenAI chat completions agentic loop
+    GeminiAdapter.ts  — Google Gemini agentic loop (shares executeTool from OpenAI)
+    index.ts          — Adapter registry: maps vendor name → AgentAdapter instance
+dist/                 — Compiled output (gitignored, built by tsc)
+bots.yaml             — Bot registry: all bot identities, models, system prompts
+flows/                — FlowSpec workflow files (.flow)
+docs/memory/          — Shared knowledge base (all bots read this)
+slack-manifest.json   — Slack app manifest for bot setup
 ```
 
 ## Session Lifecycle
@@ -75,26 +101,28 @@ slack-manifest.json — Slack app manifest for bot setup
 {
   sessionId: string | null,          // Claude Code session UUID
   name: string | null,               // Persona name for this channel (e.g. "Foreman")
+  ownerId: string | null,            // Slack/MM user ID of first person to message
   cwd: string,                       // Working directory for Claude
   model: string,                     // Model ID (default: claude-sonnet-4-6)
-  adapter: string | null,            // Vendor: "anthropic" | "openai" | "gemini" (null = anthropic)
+  adapter?: string,                  // Vendor: "anthropic" | "openai" | "gemini" (undefined = anthropic)
   plugins: string[],                 // Absolute paths to loaded plugin directories
-  isRunning: boolean,
-  autoApprove: boolean,              // If true, skip all tool approval prompts
-  ownerId: string | null,            // Slack user ID of first person to message
   canvasFileId: string | null,       // Canvas file ID for this channel
+  autoApprove: boolean,              // If true, skip all tool approval prompts
+  moderator: boolean,                // If true, this channel moderates multi-bot discussions
+  isRunning: boolean,
   abortController: AbortController | null,
   pendingApproval: PendingApproval | null,
+  contextPrimer: string | null,      // System prompt supplement injected on session start
 }
 ```
 
 ## Multi-Adapter Architecture
 
-Foreman supports three AI backends, each implementing the `AgentAdapter` interface:
+Foreman supports three AI backends, each implementing the `AgentAdapter` interface (defined in `adapters/AgentAdapter.ts`):
 
 | Vendor | Adapter | Key file |
 |--------|---------|----------|
-| `anthropic` (default) | Claude Agent SDK | `claude.ts` |
+| `anthropic` (default) | Claude Agent SDK | `adapters/AnthropicAdapter.ts` (wraps `claude.ts`) |
 | `openai` | OpenAI chat completions | `adapters/OpenAIAdapter.ts` |
 | `gemini` | Google Gemini | `adapters/GeminiAdapter.ts` |
 
@@ -113,7 +141,7 @@ OpenAI and Gemini adapters implement their own agentic tool-use loops. `GeminiAd
 ## Persona / Naming
 
 - **DM channels** (ID starts with `D`): always named "Foreman"
-- **Other channels**: assigned a random cute name on first message
+- **Other channels**: assigned a random pirate name on first message (e.g. "Bilge-soaked Cutlass", "Dread Kraken")
 - Name is injected into the system prompt: *"Your name in this channel is {name}."*
 - Override with `/cc name <name>`
 
@@ -195,19 +223,30 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 | `JiraGetTransitions` | List available transitions + required fields for a ticket |
 | `JiraGetFieldOptions` | List editable fields with allowed values (use before JiraSetField) |
 | `JiraSetField` | Set a custom field by name (e.g. Story Points, Work Type) |
-| `GetCurrentChannel` | Returns the channel ID and bot name for the current session. Call this first if unsure which channel you are in. |
+| `JiraDeleteTicket` | Delete a Jira issue |
+| `ConfluenceReadPage` | Read a Confluence page by ID |
+| `ConfluenceSearch` | Search Confluence content |
+| `ConfluenceCreatePage` | Create a new Confluence page |
+| `ConfluenceUpdatePage` | Update an existing Confluence page |
+| `GitHubCreatePR` | Create a GitHub pull request |
+| `GitHubReadPR` | Read a GitHub pull request |
+| `GitHubReadIssue` | Read a GitHub issue |
+| `GitHubSearch` | Search GitHub repositories/issues/PRs |
+| `GitHubListPRs` | List pull requests for a repository |
+| `TriggerBitrise` | Trigger a Bitrise CI build |
+| `LaunchApp` | Launch an iOS app on a simulator |
+| `SelfReboot` | Reboot the Foreman process (DM channels only) |
+| `GetCurrentChannel` | Returns the channel ID and bot name for the current session |
 | `PostMessage` | Post a message to any Slack channel (auto-appends `— BotName (model)` signature) |
 | `ReadChannel` | Read recent message history from any Slack channel |
-
-`ReadChannel` is in `AUTO_APPROVE_TOOLS` (no approval prompt needed).
 
 ## Tool Approval
 
 Tools are split into two categories:
 
-**Auto-approved** (no Slack prompt): `Read`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, `Explore`, `AskUserQuestion`, `ReadChannel`
+**Auto-approved** (no approval prompt): `Read`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, `Task`, `Explore`, `AskUserQuestion`, `Bash`, `PostMessage`, `ReadChannel`, `SelfReboot`, `LaunchApp`, `TriggerBitrise`, all Canvas tools (`CanvasRead`, `CanvasCreate`, `CanvasUpdate`, `CanvasDelete`, `CanvasReadById`, `CanvasUpdateById`, `CanvasDeleteById`, `DiagramCreate`), all Jira tools, all Confluence tools, all GitHub tools.
 
-**Requires approval**: everything else (Write, Edit, Bash, etc.) — triggers an Approve/Deny button message in Slack. The session is paused awaiting the user's button tap.
+**Requires approval**: `Write`, `Edit` — triggers an Approve/Deny button message in Slack/Mattermost. The session is paused awaiting the user's button tap.
 
 When `autoApprove` is enabled for a channel (`/cc auto-approve on`), all tools run without prompts.
 
@@ -391,7 +430,7 @@ Foreman 2.0 adds Kafka/Redpanda as a bot-to-bot communication layer alongside th
 
 Bot types: `sdk` (Anthropic/OpenAI/Gemini), `webhook` (HTTP endpoint), `human` (Slack DM gate), `mock` (testing).
 
-Current bots: `betty`, `clive`, `gemini-worker`, `gpt-worker`, `claude-judge`, `test-double`.
+Current bots: `foreman` (FlowSpec infrastructure), `betty`, `clive`, `gemini-worker`, `gpt-worker`, `claude-judge`, `test-double`.
 
 ### Kafka Dispatch
 Two dispatch functions — choose explicitly:
@@ -401,7 +440,7 @@ Two dispatch functions — choose explicitly:
 | `dispatchToBot(channelId, prompt)` | Slack (direct SDK) | All existing workflows — unchanged |
 | `dispatchToBotInbox("betty.inbox", prompt)` | Kafka | New Foreman 2.0 workflows |
 
-`dispatchToBotInbox` requires: Redpanda running + Kafka consumer loop processing the bot's inbox (Phase 2 — not yet built). If the consumer loop isn't running, messages appear in Redpanda Console but nothing responds.
+`dispatchToBotInbox` requires: Redpanda running + Kafka consumer loop processing the bot's inbox. Consumers start automatically on Foreman startup if Redpanda is available.
 
 ### Key files
 | File | Purpose |
@@ -435,42 +474,16 @@ Key files: `src/temporal/workflows.ts`, `activities.ts`, `worker.ts`, `client.ts
 
 Before modifying your own source code and rebooting, you MUST follow all 7 steps — no shortcuts, no skipping.
 
-### Step 1 — Pre-flight announcement
-State to the user: what files will change and why, plus `git log --oneline -3` to identify the last-known-good commit.
+**Full protocol with all details:** `docs/memory/dead_man_protocol.md`
 
-### Step 2 — Make changes + build
-Make the code changes, run `npm run build`. If build fails, fix it. Do NOT proceed until build is clean.
-
-### Step 3 — Dead Man snapshot (NON-NEGOTIABLE)
-Update `~/.claude/projects/-Users-chris-shreve/memory/project_foreman_2.md` with:
-- Status: `⚠️ REBOOTING — if Foreman is down, read this`
-- Which files were changed + last-known-good commit hash
-- Exact rollback commands (copy-paste ready)
-
-### Step 4 — Write session handoff note
-Write to `docs/session-handoff.md`: what we were working on, decisions made, open questions, next steps.
-
-### Step 5 — Explicit user approval
-Ask: *"Build is clean, Dead Man is updated, handoff note written. Ready to reboot — shall I proceed?"*
-**Never call SelfReboot without the user saying yes.**
-
-### Step 6 — Reboot
-Call the `SelfReboot` tool. Wait for the ✅ confirmation.
-
-### Step 7 — Post-reboot verification
-- `curl http://localhost:3001/health`
-- Test the specific thing that changed
-- Update `project_foreman_2.md` status to `✅ HEALTHY` or `🔴 BROKEN`
-- Report results to user
-
-### Recovery (if Foreman is down after a reboot)
-```bash
-cat ~/.claude/projects/-Users-chris-shreve/memory/project_foreman_2.md
-cd /Users/chris.shreve/claude-slack-bridge
-git log --oneline -5
-git checkout <last-good-commit> -- <file1> <file2>
-npm run build
-```
+**Quick reference:**
+1. **Pre-flight** — announce what changes and why, show `git log --oneline -3`
+2. **Make changes + build** — `npm run build`, fix until clean
+3. **Runtime smoke test** — `node dist/index.js &; sleep 5; curl localhost:3001/health; kill %1`
+4. **Dead Man snapshot** — update `docs/memory/project_foreman_2.md` with REBOOTING status + rollback commands
+5. **Session handoff** — write context to `docs/session-handoff.md`
+6. **User approval** — never reboot without explicit "yes"
+7. **Reboot** — call SelfReboot, then verify health + functionality post-reboot
 
 ---
 
