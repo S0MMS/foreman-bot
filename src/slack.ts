@@ -1427,8 +1427,7 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         const sub = args[1];
         if (sub === "add" && args[2] && args[3]) {
           // /cc bots add <name> <channelId or #channel>
-          const { loadBotRegistry, saveBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");
-          const registry = loadBotRegistry();
+          const { addToChannelRegistry, getRegistryPath } = await import("./flowspec/registry.js");
           const name = args[2].replace(/^@/, "");
           let channelId = args[3];
           const mentionMatch = channelId.match(/^<#([A-Z0-9]+)/i);
@@ -1445,20 +1444,10 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
             }
             channelId = found.id;
           }
-          registry[name] = channelId;
-          saveBotRegistry(registry);
+          addToChannelRegistry("slack", name, channelId);
           await respond(`:white_check_mark: Registered bot \`@${name}\` → \`${channelId}\``);
         } else if (sub === "remove" && args[2]) {
-          const { loadBotRegistry, saveBotRegistry } = await import("./flowspec/registry.js");
-          const registry = loadBotRegistry();
-          const name = args[2].replace(/^@/, "");
-          if (registry[name]) {
-            delete registry[name];
-            saveBotRegistry(registry);
-            await respond(`:white_check_mark: Removed bot \`@${name}\``);
-          } else {
-            await respond(`:x: Bot \`@${name}\` not found in registry`);
-          }
+          await respond(`:x: Remove is no longer supported. Edit \`config/channel-registry.yaml\` directly.`);
         } else {
           // List all bots
           const { loadBotRegistry, getRegistryPath } = await import("./flowspec/registry.js");

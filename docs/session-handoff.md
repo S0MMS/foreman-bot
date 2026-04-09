@@ -1,47 +1,23 @@
-# Session Handoff — 2026-04-08 (FlowSpec /f run argument parsing fix)
+# Session Handoff — 2026-04-09 (third reboot)
 
-## What Changed This Session
+## What we were working on
+Two fixes to `/f provision` and `/f run` in `src/mattermost.ts`:
 
-### Bug fix: `/f run` argument parsing
-- **Problem**: `/f run hello-world.flow "Hello World"` failed — naive `split(/\s+/)` broke quoted strings. Also, users couldn't pass `key=value` inputs with multi-word values.
-- **Fix**: Added `parseShellArgs()` (same quote-aware parser Slack already uses) to `mattermost.ts`. Rewrote `/f run` argument handling:
-  - Workflow name auto-selected from first workflow in file (no need to type it)
-  - `--name "Workflow Name"` flag for multi-workflow files
-  - Multi-word input values work: `topic=the meaning of life` (greedy append) or `topic="the meaning of life"` (quoted)
+1. **Upsert logic** — provision loop no longer aborts when a Mattermost channel already exists but isn't in `channel-registry.yaml`. Instead it looks up the existing channel by name and adopts it.
+2. **Path resolution fix** — removed hardcoded `"flows"` path segment from both `run` and `provision` commands. Paths now resolve relative to `session.cwd`, matching how `slack.ts` already handles it. This fixes the "File not found" error when running `workspaces/techops-2187/techops-2187.flow`.
 
-### File changed
-- `src/mattermost.ts`: Added `parseShellArgs()` function, rewrote `case "run"` block
+## Where we left off
+- Both fixes applied, build clean, smoke test passed
+- Rebooting so user can retry `/f provision workspaces/techops-2187/techops-2187.flow`
 
-## New `/f run` Syntax
-```
-/f run hello-world.flow                              # auto-selects first workflow
-/f run hello-world.flow topic=cats                   # single-word input
-/f run hello-world.flow topic=the meaning of life    # multi-word (greedy)
-/f run hello-world.flow topic="the meaning of life"  # multi-word (quoted)
-/f run multi.flow --name "Hello World" topic=foo     # disambiguate workflow
-```
+## Also discussed this session
+- Personal memory directory (`~/.claude/projects/-Users-chris-shreve/memory/`) still has stale Foreman/MFP files. Added as dev-ideas #23 — cleanup pending.
 
-## Prior Session Context (carried forward)
+## Prior session context (still relevant)
+- Infrastructure IDs: Foreman bot `a4x367t6hpr178pnyegwh7mxer`, Team `oze9f7nz97f45x5funjyn1kh4h`
+- flowbot-01: `w3fkpfdzd38z5fkei3sdabnhyo`, flowbot-02: `witk91ucbjgh58buud53s6w83o`, flowbot-03: `n6gyjtp4y78njqtkwreabktjhh`
 
-### Architecture: Single foreman bot for all FlowSpec posting
-- `foreman` Mattermost bot (user_id: `a4x367t6hpr178pnyegwh7mxer`)
-- `processChannelMessageForFlowSpec` and `postStatusMessage` use foreman token exclusively
-- All closures thread `botToken` explicitly — no defaults anywhere
-
-### FLOWSPEC-101 workspace
-- Sidebar category: `FLOWSPEC-101` (id: `i1x6p9f76by8fgn469e1pmztdc`)
-- `FlowSpec Engineer` channel (id: `obxixf4pzifg3e7g1jozs5wgya`)
-- `flowbot-01` channel (id: `w3fkpfdzd38z5fkei3sdabnhyo`)
-- `flowbot-02` channel (id: `witk91ucbjgh58buud53s6w83o`)
-
-### Plan (docs/plan-flowspec-workspaces.md)
-- Phase 1: COMPLETE (foreman bot, channels, category)
-- Phase 2: COMPLETE (FlowSpec uses foreman token exclusively)
-- Phase 3: Workspace bot registry (scoped config, per-channel system prompt + model)
-- Phase 4: `/f workspace` command
-- Phase 5: End-to-end test
-
-## What To Test After Reboot
-1. `/f run hello-world.flow` — should auto-select "Hello World" workflow
-2. `/f run hello-world.flow topic=the meaning of life` — should override default topic
-3. `/f run hello-world.flow topic="cats and dogs"` — quoted value should work
+## Next steps
+1. User retests `/f provision workspaces/techops-2187/techops-2187.flow`
+2. If it works, commit all uncommitted changes
+3. Clean up personal memory directory (dev-ideas #23)

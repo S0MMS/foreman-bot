@@ -127,6 +127,51 @@ function collectMeansConditions(steps: Step[], meansMap: Map<string, string[]>):
   }
 }
 
+// ── Bot Name Extraction ─────────────────────────────────────────────────────
+
+/** Walk all workflows and collect every unique @bot name referenced in ask/send steps. */
+export function extractBotNames(workflows: Workflow[]): string[] {
+  const names = new Set<string>();
+  for (const wf of workflows) {
+    collectBotNames(wf.steps, names);
+  }
+  return Array.from(names);
+}
+
+function collectBotNames(steps: Step[], names: Set<string>): void {
+  for (const step of steps) {
+    switch (step.type) {
+      case 'ask':
+        names.add(step.bot);
+        if (step.failHandler) collectBotNames(step.failHandler, names);
+        if (step.timeoutHandler) collectBotNames(step.timeoutHandler, names);
+        break;
+      case 'send':
+        if (step.targetType === 'bot') names.add(step.target);
+        break;
+      case 'parallel':
+      case 'race':
+        step.branches.forEach(b => collectBotNames(b, names));
+        break;
+      case 'for_each':
+        collectBotNames(step.body, names);
+        break;
+      case 'repeat_until':
+        collectBotNames(step.body, names);
+        if (step.noConvergeHandler) collectBotNames(step.noConvergeHandler, names);
+        break;
+      case 'if':
+        collectBotNames(step.body, names);
+        step.otherwiseIfs?.forEach(b => collectBotNames(b.body, names));
+        if (step.otherwise) collectBotNames(step.otherwise, names);
+        break;
+      case 'approval':
+        if (step.rejectHandler) collectBotNames(step.rejectHandler, names);
+        break;
+    }
+  }
+}
+
 function addMeans(cond: ConditionExpr, meansMap: Map<string, string[]>): void {
   if ('and' in cond) { cond.and.forEach(c => addMeans(c, meansMap)); return; }
   if ('or' in cond) { cond.or.forEach(c => addMeans(c, meansMap)); return; }

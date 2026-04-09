@@ -289,6 +289,17 @@ export function getForemanToken(): string {
   return MM_FOREMAN_TOKEN;
 }
 
+/** Get the Foreman bot's Mattermost user ID (for inviting to channels). */
+async function getForemanBotUserId(): Promise<string | null> {
+  if (!MM_FOREMAN_TOKEN) return null;
+  try {
+    const me = await mmFetch("GET", "/users/me", undefined, MM_FOREMAN_TOKEN);
+    return me?.id || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── FlowSpec integration ──────────────────────────────────────────────────────
 
 /**
@@ -472,7 +483,7 @@ async function handleCommand(channel: string, text: string, userId: string, botT
         const { flowspecWorkflow } = await import("./temporal/workflows.js");
 
         const session = getState(channel);
-        const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, "flows", flowFile);
+        const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, flowFile);
         if (!existsSync(filePath)) {
           await respond(`File not found: \`${filePath}\``);
           return;
@@ -559,6 +570,105 @@ async function handleCommand(channel: string, text: string, userId: string, botT
       break;
     }
 
+    case "provision": {
+      const flowFile = args[1];
+      if (!flowFile) {
+        await respond("Usage: `/f provision <file.flow>`\n\nReads the flow file, finds all @bot references, and creates Mattermost channels for any that don't exist yet.");
+        return;
+      }
+      try {
+        const { resolve, isAbsolute } = await import("path");
+        const { readFileSync, existsSync } = await import("fs");
+        const { parseFlowSpec } = await import("./flowspec/parser.js");
+        const { extractBotNames } = await import("./flowspec/runtime.js");
+        const { loadRawRegistry, addToChannelRegistry } = await import("./flowspec/registry.js");
+
+        const session = getState(channel);
+        const filePath = isAbsolute(flowFile) ? flowFile : resolve(session.cwd, flowFile);
+        if (!existsSync(filePath)) {
+          await respond(`File not found: \`${filePath}\``);
+          return;
+        }
+
+        const source = readFileSync(filePath, "utf-8");
+        const workflows = parseFlowSpec(source);
+        const botNames = extractBotNames(workflows);
+
+        if (botNames.length === 0) {
+          await respond("No @bot references found in this flow file.");
+          return;
+        }
+
+        const registry = loadRawRegistry();
+        const mmBots = registry["mattermost"] || {};
+        const results: string[] = [];
+        let created = 0;
+
+        for (const botName of botNames) {
+          if (mmBots[botName]) {
+            results.push(`  ✓ ${botName} — already exists`);
+            continue;
+          }
+
+          // Try to create the channel; if it already exists, look it up instead
+          let chRes: any;
+          let adopted = false;
+          try {
+            chRes = await mmFetch("POST", "/channels", {
+              team_id: MM_TEAM_ID,
+              name: botName,
+              display_name: botName,
+              type: "O",
+              purpose: `FlowSpec bot channel — provisioned for ${flowFile}`,
+            });
+          } catch (createErr: any) {
+            if (createErr?.message?.includes("exists")) {
+              // Channel already exists in Mattermost — adopt it
+              try {
+                chRes = await mmFetch("GET", `/teams/${MM_TEAM_ID}/channels/name/${botName}`);
+                adopted = true;
+              } catch {
+                results.push(`  ✗ ${botName} — exists but lookup failed`);
+                continue;
+              }
+            } else {
+              results.push(`  ✗ ${botName} — ${createErr?.message || "failed to create channel"}`);
+              continue;
+            }
+          }
+
+          if (!chRes?.id) {
+            results.push(`  ✗ ${botName} — failed to create channel`);
+            continue;
+          }
+
+          // Invite the Foreman bot
+          const foremanUserId = await getForemanBotUserId();
+          if (foremanUserId) {
+            await mmFetch("POST", `/channels/${chRes.id}/members`, { user_id: foremanUserId }).catch(() => {});
+          }
+
+          // Add to channel registry
+          addToChannelRegistry("mattermost", botName, chRes.id);
+
+          if (adopted) {
+            results.push(`  ↩ ${botName} — adopted existing channel (${chRes.id})`);
+          } else {
+            results.push(`  + ${botName} — created (channel: ${chRes.id})`);
+          }
+          created++;
+        }
+
+        await respond(
+          `**Provisioned for \`${flowFile}\`:**\n${results.join("\n")}\n\n` +
+          (created > 0 ? `${created} channel(s) created. \`channel-registry.yaml\` updated.` : "All bots already provisioned.")
+        );
+      } catch (err) {
+        await respond(`Provision error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      break;
+    }
+
     default: {
       await respond(
         "**Available commands:**\n" +
@@ -571,6 +681,7 @@ async function handleCommand(channel: string, text: string, userId: string, botT
         "- `/f auto-approve on|off` — toggle tool auto-approval\n" +
         "- `/f plugin <path>` — load a plugin directory\n" +
         "- `/f run <file.flow> [key=value ...]` — run a FlowSpec workflow\n" +
+        "- `/f provision <file.flow>` — create channels for bots in a flow file\n" +
         "- `/f check <workflowId>` — check FlowSpec workflow status"
       );
       break;
@@ -726,7 +837,7 @@ async function registerSlashCommand(): Promise<void> {
       display_name: "Foreman",
       description: "Control your Foreman bot session",
       auto_complete: true,
-      auto_complete_hint: "session|model|cwd|new|stop|name|plugin|auto-approve|run|check",
+      auto_complete_hint: "session|model|cwd|new|stop|name|plugin|auto-approve|run|provision|check",
       auto_complete_desc: "Foreman bot commands",
     });
     console.log("[mattermost] Registered /f slash command");

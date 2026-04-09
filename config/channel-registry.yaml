@@ -18,8 +18,12 @@ slack:
   collator: C0APQJL5868
   gemini-verifier: C0AP53LT7T9
   techops-2187: C0APWN10PKN
-
 mattermost:
   flowbot-01: w3fkpfdzd38z5fkei3sdabnhyo
   flowbot-02: witk91ucbjgh58buud53s6w83o
   flowbot-03: n6gyjtp4y78njqtkwreabktjhh
+  claude-worker: zema9ygw7pdspcmr33pd5mpz5o
+  techops-2187: h3h5ohp6r3r9mescewmkkxs1oo
+  gemini-worker: pn47gtnjkfruxr3eqgzcz4yeqc
+  gpt-worker: wzmi4n1yyt8wfya9c9aiiitsiy
+  claude-judge: kzmg7j7fftdh5ksn4noxs9qnhw

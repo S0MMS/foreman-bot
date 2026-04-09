@@ -12,10 +12,11 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — FlowSpec /f run parsing fixed
+## Current Health: ✅ HEALTHY
 
-**Last known good commit:** `dea9d03`
-**Rollback:** `git checkout 7a73338 -- src/mattermost.ts && npm run build`
+**Last known good commit:** `d1eb4c6`
+**Recent uncommitted changes:** `src/mattermost.ts` — (1) provision upsert logic, (2) removed hardcoded "flows" path from run/provision commands
+**Rollback:** `git checkout d1eb4c6 -- src/mattermost.ts && npm run build`
 
 ---
 
@@ -203,8 +204,15 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 
 **Possible approach:** Flip the lookup — instead of "which bot user is in this channel?", do "which bot name does this channel map to?" by reversing `channel-registry.yaml` at startup into a `channelId → botName` map. Then look up the bot definition from `bots.yaml`. This removes the need for per-bot Mattermost accounts entirely — one Foreman bot account could serve all channels with different personas.
 
+### Provision-Time Channel Config (Model + Auto-Approve)
+`/f provision` currently creates channels and registers them, but channel runtime settings (model, auto-approve, etc.) must be configured manually afterward. Extend provisioning to declare per-channel config so workflows are ready to run hands-free.
+
+**Possible locations for the config:** per-workspace config file (e.g. `workspaces/techops-2187/channels.yaml`), or inline in the `.flow` file itself, or in `bots.yaml`. Workspace level is likely best since the same bot may need different settings in different workflows.
+
+**Minimum viable:** model + auto-approve per channel. Could later extend to timeouts, tool scoping, etc.
+
 ### Other
-- **Mobile-friendly layout** — collapsible sidebar, hamburger menu
+- **Mobile access via tunnel** — expose Mattermost to phone via ngrok, Tailscale, or Cloudflare Tunnel so the Mattermost iOS app can connect (replaces custom mobile layout idea)
 - **Ollama adapter** — local open source LLMs (Llama 3, Mistral, etc.) as bots in `bots.yaml`
 - **Dockerize Temporal** — add to docker-compose.yml
 - **Dockerize everything** — single `docker compose up` for full stack

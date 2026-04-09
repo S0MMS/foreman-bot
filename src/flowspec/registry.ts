@@ -15,9 +15,9 @@
  * This preserves backwards compatibility with resolveBot() in runtime.ts.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 /** Resolve the repo root by walking up from this file's directory. */
 function findRepoRoot(): string {
@@ -77,11 +77,41 @@ export function loadBotRegistry(): BotRegistry {
   }
 }
 
-/** Save is no longer supported — edit config/channel-registry.yaml directly. */
-export function saveBotRegistry(_registry: BotRegistry): void {
-  throw new Error(
-    'saveBotRegistry() is deprecated. Edit config/channel-registry.yaml directly.'
-  );
+/**
+ * Load the raw YAML structure (transport → bot → channelId).
+ * Used by provision to check existence without prefix flattening.
+ */
+export function loadRawRegistry(): Record<string, Record<string, string>> {
+  const fullPath = getRegistryFullPath();
+  if (!existsSync(fullPath)) return {};
+  try {
+    return parse(readFileSync(fullPath, 'utf-8')) || {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Add a bot→channel mapping to the channel registry YAML.
+ * Reads the current file, adds the entry under the given transport, writes it back.
+ */
+export function addToChannelRegistry(transport: string, botName: string, channelId: string): void {
+  const fullPath = getRegistryFullPath();
+  const parsed = loadRawRegistry();
+  if (!parsed[transport]) parsed[transport] = {};
+  parsed[transport][botName] = channelId;
+
+  // Preserve the comment header
+  const header = '# channel-registry.yaml — Where each bot lives, per transport\n' +
+    '#\n' +
+    '# FlowSpec uses this file to dispatch workflows to the right channels.\n' +
+    '# Bot names here must match the names used in .flow files (e.g. "assign flowbot-01").\n' +
+    '#\n' +
+    '# Format:\n' +
+    '#   <transport>:\n' +
+    '#     <bot-name>: <channel-id>\n\n';
+
+  writeFileSync(fullPath, header + stringify(parsed, { lineWidth: 0 }), 'utf-8');
 }
 
 /** Get the registry file path (for display in commands). */

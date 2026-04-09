@@ -1,5 +1,11 @@
 # Development Ideas
 
+## 23. Clean Up Personal Memory Directory
+- **Status**: Pending
+- **Concept**: All Foreman and project-specific memory files were supposed to be moved out of `~/.claude/projects/-Users-chris-shreve/memory/` into the Foreman repo at `claude-slack-bridge/docs/memory/`. The move happened but the originals were never deleted. 14 files + MEMORY.md still reference Foreman system docs, MFP project docs, and feature roadmap items that don't belong in the personal memory directory. Need to delete all Foreman/MFP files from the personal directory and reset MEMORY.md to be empty or only contain entries scoped to the home directory context.
+
+---
+
 ## 22. Foreman UI Tech Stack — React + Tailwind + shadcn/ui
 - **Status**: Partially shipped — React + Vite + Tailwind live in `ui/`. TypeScript and shadcn/ui not adopted.
 - **Concept**: When building `foreman ui`, use Vite + React + TypeScript + Tailwind + shadcn/ui. The primary design constraint is that the UI must be fully buildable by a Foreman bot — no hand-written HTML ever.
