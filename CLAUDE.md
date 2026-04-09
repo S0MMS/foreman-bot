@@ -432,6 +432,45 @@ Bot types: `sdk` (Anthropic/OpenAI/Gemini), `webhook` (HTTP endpoint), `human` (
 
 Current bots: `foreman` (FlowSpec infrastructure), `betty`, `clive`, `gemini-worker`, `gpt-worker`, `claude-judge`, `test-double`.
 
+### config/channel-registry.yaml — FlowSpec Channel Routing
+`config/channel-registry.yaml` maps bot names to channel IDs, grouped by transport. FlowSpec reads this at runtime to dispatch workflows. This file is separate from `bots.yaml` because bot identity and channel routing are different concerns — not all devs who interact with bots will use FlowSpec.
+
+```yaml
+slack:
+  flowbot-01: C0AP5TEMBL2
+mattermost:
+  flowbot-01: w3fkpfdzd38z5fkei3sdabnhyo
+```
+
+### Adding a Bot to a FlowSpec Workflow
+
+When a user asks you to add a new bot to a workflow (e.g. "add a judge bot"), follow these steps. **Do NOT create a new Mattermost bot account** — the existing Foreman bot serves all channels.
+
+1. **Create a channel** in Mattermost for the new bot (via API or UI)
+2. **Invite the Foreman bot** into the new channel (it must be a member to receive dispatches)
+3. **Add the channel ID** to `config/channel-registry.yaml` under the appropriate transport
+4. **Add the bot definition** to `bots.yaml` (name, type, model, system_prompt)
+5. **Reference the bot** in the `.flow` file by name (e.g. `ask @my-new-bot "..."`)
+
+That's it. No new bot accounts, no new tokens, no reboot. The existing Foreman bot handles all channels — each channel is just a routing target, not a separate bot identity.
+
+**Example:** To add `flowbot-03` as a neutral judge:
+```yaml
+# config/channel-registry.yaml
+mattermost:
+  flowbot-03: n6gyjtp4y78njqtkwreabktjhh
+
+# bots.yaml
+flowbot-03:
+  type: sdk
+  provider: anthropic
+  model: claude-sonnet-4-6
+  system_prompt: |
+    You are a neutral judge and synthesizer.
+```
+
+For a runnable tutorial with progressive examples, see `flows/flowspec-tutorial.flow`.
+
 ### Kafka Dispatch
 Two dispatch functions — choose explicitly:
 

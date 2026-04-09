@@ -1,0 +1,216 @@
+-- ============================================================================
+-- FlowSpec Tutorial
+-- ============================================================================
+--
+-- This file is a runnable tutorial. Each workflow teaches one FlowSpec concept,
+-- building from the simplest possible flow to multi-step orchestration.
+--
+-- All workflows use flowbot-01, flowbot-02, and flowbot-03 — the three
+-- bots mapped in config/channel-registry.yaml for Mattermost. You can
+-- run any of these from ANY channel where a Foreman bot is listening.
+--
+-- IMPORTANT: FlowSpec is indentation-sensitive. Handlers like
+-- "if it never converges", "if it times out", and "if it fails"
+-- must be indented INSIDE the block they belong to — they are
+-- children of the construct, not siblings after it.
+--
+-- When no --name is provided, the FIRST workflow in the file runs.
+--
+-- HOW TO RUN (from Mattermost):
+--
+--   Lesson 1 — Hello World:
+--     /f run flowspec-tutorial.flow
+--
+--   Lesson 2 — Haiku:
+--     /f run flowspec-tutorial.flow --name "Haiku"
+--     /f run flowspec-tutorial.flow --name "Haiku" topic="cats"
+--     /f run flowspec-tutorial.flow --name "Haiku" topic="the meaning of life"
+--
+--   Lesson 3 — Echo:
+--     /f run flowspec-tutorial.flow --name "Echo"
+--     /f run flowspec-tutorial.flow --name "Echo" message="Hello from FlowSpec!"
+--
+--   Lesson 4 — Two Perspectives:
+--     /f run flowspec-tutorial.flow --name "Two Perspectives"
+--     /f run flowspec-tutorial.flow --name "Two Perspectives" topic="tabs vs spaces"
+--
+--   Lesson 5 — Peer Review:
+--     /f run flowspec-tutorial.flow --name "Peer Review"
+--     /f run flowspec-tutorial.flow --name "Peer Review" topic="why Rust will replace C++"
+--
+--   Lesson 6 — Parallel Research:
+--     /f run flowspec-tutorial.flow --name "Parallel Research"
+--     /f run flowspec-tutorial.flow --name "Parallel Research" topic="quantum computing"
+--
+--   Lesson 7 — Quality Loop:
+--     /f run flowspec-tutorial.flow --name "Quality Loop"
+--     /f run flowspec-tutorial.flow --name "Quality Loop" topic="the importance of code review"
+--
+-- HOW TO RUN (from Slack):
+--
+--   /cc run flowspec-tutorial.flow "Hello World"
+--   /cc run flowspec-tutorial.flow "Haiku" topic="cats"
+--   /cc run flowspec-tutorial.flow "Echo" message="Hello from FlowSpec!"
+--
+-- ============================================================================
+
+
+-- ── Lesson 1: Hello World ────────────────────────────────────────────────────
+--
+-- The absolute simplest workflow. One bot, one prompt. That's it.
+-- If this runs, FlowSpec works.
+--
+-- Concepts introduced:
+--   - workflow declaration
+--   - ask (dispatch a prompt to a bot and wait for the response)
+--
+-- Try it:
+--   /f run flowspec-tutorial.flow
+
+workflow "Hello World"
+  ask @flowbot-01 "Say hello to the world."
+
+
+-- ── Lesson 2: Haiku ─────────────────────────────────────────────────────────
+--
+-- Now we add inputs, capture, interpolation, and a second bot.
+-- Bot 1 writes a haiku. The result is captured into a variable.
+-- That variable is sent to Bot 2.
+--
+-- Concepts introduced:
+--   - inputs with defaults
+--   - -> capture (save the bot's response into a named variable)
+--   - {variable} interpolation
+--   - send (fire-and-forget — just posts text, no bot session)
+--
+-- Try it:
+--   /f run flowspec-tutorial.flow --name "Haiku"
+--   /f run flowspec-tutorial.flow --name "Haiku" topic=cats
+
+workflow "Haiku"
+  inputs: topic (default "the weather")
+  ask @flowbot-01 "Write a haiku about {topic}" -> haiku
+  send @flowbot-02 "{haiku}"
+
+
+-- ── Lesson 3: Echo ──────────────────────────────────────────────────────────
+--
+-- Proves that input parameters work. Whatever you pass as 'message' gets
+-- echoed back through a bot. If you don't pass anything, the default is used.
+--
+-- Try it:
+--   /f run flowspec-tutorial.flow --name "Echo"
+--   /f run flowspec-tutorial.flow --name "Echo" message=Hello from FlowSpec!
+--
+-- Concepts introduced:
+--   - required vs default inputs
+--   - passing input parameters from the command line
+
+workflow "Echo"
+  inputs: message (default "If you can read this then FlowSpec is working.")
+  ask @flowbot-01 "Repeat this message back to me exactly: {message}" -> echo
+  send @flowbot-02 "Echo result: {echo}"
+
+
+-- ── Lesson 4: Two Perspectives ──────────────────────────────────────────────
+--
+-- Same question, two bots. Each bot gets its own session and answers
+-- independently. The results are collected into separate variables.
+--
+-- Concepts introduced:
+--   - multiple ask steps (sequential — bot 1 finishes, then bot 2 starts)
+--   - multiple captured variables
+--   - multi-line prompts with variable interpolation
+
+workflow "Two Perspectives"
+  inputs: topic (default "whether pineapple belongs on pizza")
+
+  ask @flowbot-01 "Give a short argument FOR: {topic}" -> argument_for
+  ask @flowbot-02 "Give a short argument AGAINST: {topic}" -> argument_against
+  send @flowbot-01 "FOR: {argument_for} | AGAINST: {argument_against}"
+
+
+-- ── Lesson 5: Peer Review ───────────────────────────────────────────────────
+--
+-- Bot 1 writes something. Bot 2 reviews it. Based on the review, the
+-- workflow takes different paths.
+--
+-- Concepts introduced:
+--   - sequential handoff (output of one bot feeds into the next)
+--   - if/otherwise conditional branching
+--   - the 'means' operator (semantic classification — the bot's response
+--     is classified by a follow-up LLM call, not by substring matching)
+--
+-- NOTE: 'means' is powerful. Instead of forcing the bot to output a magic
+-- string like "APPROVED", you describe what the response means in plain
+-- English and FlowSpec classifies it for you.
+
+workflow "Peer Review"
+  inputs: topic (default "why every developer should learn functional programming")
+
+  ask @flowbot-01 "Write a short, persuasive paragraph about: {topic}" -> argument
+  ask @flowbot-02 "Critically review this argument. Is it well-reasoned and convincing? {argument}" -> review
+
+  if {review} means "the argument is convincing and well-reasoned"
+    send @flowbot-01 "Your argument passed peer review! Review: {review}"
+  otherwise
+    ask @flowbot-01 "Revise your argument based on this feedback: {review} Original argument: {argument}" -> revised
+    send @flowbot-02 "Here is the revised version: {revised}"
+
+
+-- ── Lesson 6: Parallel Research ─────────────────────────────────────────────
+--
+-- Two bots research in parallel. A THIRD neutral bot synthesizes their
+-- findings. This is the classic producer/producer/judge pattern — the
+-- judge never saw the original question, only the evidence.
+--
+-- Concepts introduced:
+--   - at the same time (parallel fan-out — waits for all branches)
+--   - three-bot pattern (two producers + one neutral judge)
+--   - combining results from parallel branches
+
+workflow "Parallel Research"
+  inputs: topic (default "the future of AI")
+
+  at the same time
+    ask @flowbot-01 "List 3 potential benefits of {topic}" -> benefits
+    ask @flowbot-02 "List 3 potential risks of {topic}" -> risks
+
+  ask @flowbot-03 """
+    You are a neutral judge. Synthesize these two independent perspectives
+    into a balanced one-paragraph summary. Do not take sides.
+    Benefits: {benefits}
+    Risks: {risks}
+  """ -> summary
+
+  send @flowbot-01 "Research complete. Summary: {summary}"
+  send @flowbot-02 "Research complete. Summary: {summary}"
+
+
+-- ── Lesson 7: Quality Loop ──────────────────────────────────────────────────
+--
+-- Bot 1 writes. Bot 2 scores it. If the score is too low, bot 1 revises
+-- and bot 2 scores again. This repeats until the score is high enough
+-- or we hit the maximum number of attempts.
+--
+-- Concepts introduced:
+--   - repeat until (convergence loop with a mandatory maximum)
+--   - 'is above' numeric comparison
+--   - INDENTATION MATTERS: "if it never converges" must be indented
+--     inside the repeat block — it's a handler, not a standalone statement
+--   - if it never converges (fallback when max iterations are exhausted)
+--   - iterative refinement pattern
+
+workflow "Quality Loop"
+  inputs: topic (default "the importance of code review")
+
+  ask @flowbot-01 "Write a concise paragraph about: {topic}" -> draft
+
+  repeat until {score} is above 7, at most 3 times
+    ask @flowbot-02 "Score this writing from 1-10 (respond with ONLY the number): {draft}" -> score
+    if {score} is below 8
+      ask @flowbot-01 "Improve this paragraph (current score: {score}/10): {draft}" -> draft
+    if it never converges
+      send @flowbot-01 "Could not reach quality threshold after 3 rounds. Last draft: {draft}"
+
+  send @flowbot-02 "Final draft (score: {score}): {draft}"

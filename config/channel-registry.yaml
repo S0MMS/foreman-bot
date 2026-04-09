@@ -1,0 +1,25 @@
+# channel-registry.yaml — Where each bot lives, per transport
+#
+# FlowSpec uses this file to dispatch workflows to the right channels.
+# Bot names here must match the names used in .flow files (e.g. "assign flowbot-01").
+#
+# Format:
+#   <transport>:
+#     <bot-name>: <channel-id>
+
+slack:
+  flowbot-01: C0AP5TEMBL2
+  flowbot-02: C0AP3RSGQJJ
+  claude-worker: C0APLQ31N04
+  claude-judge: C0APF4QP1SS
+  gemini-worker: C0APLQ4JYJG
+  gpt-worker: C0AP1P1M92T
+  output: C0AP1UMSDGF
+  collator: C0APQJL5868
+  gemini-verifier: C0AP53LT7T9
+  techops-2187: C0APWN10PKN
+
+mattermost:
+  flowbot-01: w3fkpfdzd38z5fkei3sdabnhyo
+  flowbot-02: witk91ucbjgh58buud53s6w83o
+  flowbot-03: n6gyjtp4y78njqtkwreabktjhh

@@ -1,45 +1,90 @@
 /**
- * FlowSpec Bot Registry — maps @bot names in .flow files to Slack channel IDs.
+ * FlowSpec Bot Registry — maps @bot names in .flow files to channel IDs.
  *
- * Config file: ~/.foreman/bots.json
+ * Config file: config/channel-registry.yaml (in repo root)
  * Format:
- * {
- *   "writer":   "C0ABC123",
- *   "reviewer":  "C0DEF456",
- *   "general":   "C0GHI789"
- * }
+ *   slack:
+ *     flowbot-01: C0AP5TEMBL2
+ *   mattermost:
+ *     flowbot-01: w3fkpfdzd38z5fkei3sdabnhyo
  *
- * Bot names are case-insensitive. Channel names (without #) can also be
- * used as values — they'll be resolved to IDs at runtime.
+ * Bot names are case-insensitive at lookup time. The registry is built as a
+ * flat map with transport-prefixed keys for non-Slack transports:
+ *   { "flowbot-01": "C0AP5TEMBL2", "mm:flowbot-01": "mm:w3fkpfdzd38z5fkei3sdabnhyo" }
+ *
+ * This preserves backwards compatibility with resolveBot() in runtime.ts.
  */
 
-import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { parse } from 'yaml';
 
-const REGISTRY_PATH = join(homedir(), '.foreman', 'bots.json');
-
-export interface BotRegistry {
-  [botName: string]: string; // bot name → channel ID or channel name
+/** Resolve the repo root by walking up from this file's directory. */
+function findRepoRoot(): string {
+  let dir = join(import.meta.dirname ?? __dirname, '..', '..');
+  // Normalize in case we're running from dist/
+  if (dir.endsWith('/dist')) {
+    dir = dir.slice(0, -5);
+  }
+  return dir;
 }
 
-/** Load the bot registry from ~/.foreman/bots.json. Returns empty object if missing. */
+const REGISTRY_FILENAME = 'config/channel-registry.yaml';
+
+function getRegistryFullPath(): string {
+  return join(findRepoRoot(), REGISTRY_FILENAME);
+}
+
+export interface BotRegistry {
+  [botName: string]: string; // bot name → channel ID (with optional transport prefix)
+}
+
+/** Transport key → prefix used in the flat registry. Slack is the default (no prefix). */
+const TRANSPORT_PREFIX: Record<string, string> = {
+  slack: '',
+  mattermost: 'mm:',
+};
+
+/**
+ * Load the channel registry from config/channel-registry.yaml.
+ * Returns a flat map compatible with resolveBot():
+ *   { "botName": "slackChannelId", "mm:botName": "mm:mattermostChannelId" }
+ */
 export function loadBotRegistry(): BotRegistry {
-  if (!existsSync(REGISTRY_PATH)) return {};
+  const fullPath = getRegistryFullPath();
+  if (!existsSync(fullPath)) return {};
   try {
-    const raw = readFileSync(REGISTRY_PATH, 'utf-8');
-    return JSON.parse(raw);
+    const raw = readFileSync(fullPath, 'utf-8');
+    const parsed = parse(raw) as Record<string, Record<string, string>> | null;
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const registry: BotRegistry = {};
+    for (const [transport, bots] of Object.entries(parsed)) {
+      if (!bots || typeof bots !== 'object') continue;
+      const prefix = TRANSPORT_PREFIX[transport] ?? `${transport}:`;
+      for (const [botName, channelId] of Object.entries(bots)) {
+        if (prefix) {
+          registry[`${prefix}${botName}`] = `${prefix}${channelId}`;
+        } else {
+          // Slack (default) — no prefix
+          registry[botName] = channelId;
+        }
+      }
+    }
+    return registry;
   } catch {
     return {};
   }
 }
 
-/** Save the bot registry to ~/.foreman/bots.json. */
-export function saveBotRegistry(registry: BotRegistry): void {
-  writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2) + '\n', 'utf-8');
+/** Save is no longer supported — edit config/channel-registry.yaml directly. */
+export function saveBotRegistry(_registry: BotRegistry): void {
+  throw new Error(
+    'saveBotRegistry() is deprecated. Edit config/channel-registry.yaml directly.'
+  );
 }
 
 /** Get the registry file path (for display in commands). */
 export function getRegistryPath(): string {
-  return REGISTRY_PATH;
+  return getRegistryFullPath();
 }

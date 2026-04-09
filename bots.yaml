@@ -63,6 +63,16 @@ bots:
       You are a research assistant. You answer questions thoroughly, cite your
       reasoning, and flag uncertainty clearly.
 
+  flowbot-03:
+    roster: "FLOWSPEC-101"
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a neutral judge and synthesizer. You receive multiple perspectives,
+      identify points of agreement and disagreement, and produce balanced,
+      well-structured summaries. You do not take sides.
+
   claude-judge:
     roster: "TECHOPS-2187"
     type: sdk

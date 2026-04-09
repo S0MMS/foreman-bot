@@ -175,9 +175,66 @@ The original design for persistent conversations via Kafka log topics is saved i
 
 ## Phase 6 — Planned (future)
 
+### MCP Toolbelt Decomposition
+Break the monolithic `foreman-toolbelt` (38 tools in `mcp-canvas.ts`) into domain-specific MCP servers:
+- **`foreman-canvas`** — CanvasList, CanvasRead, CanvasFindSection, CanvasCreate, CanvasAppend, CanvasDelete, CanvasReadById, CanvasUpdateElementById, CanvasDeleteElementById
+- **`foreman-jira`** — JiraCreateTicket, JiraUpdateTicket, JiraDeleteTicket, JiraReadTicket, JiraSearch, JiraAddComment, JiraUpdateComment, JiraDeleteComment, JiraTransitionTicket, JiraAssignTicket, JiraGetTransitions, JiraGetFieldOptions, JiraSetField
+- **`foreman-confluence`** — ConfluenceReadPage, ConfluenceSearch, ConfluenceCreatePage, ConfluenceUpdatePage
+- **`foreman-github`** — GitHubCreatePR, GitHubReadPR, GitHubReadIssue, GitHubSearch, GitHubListPRs
+- **`foreman-comms`** — PostMessage, GetCurrentChannel, ReadChannel
+- **`foreman-infra`** — SelfReboot, TriggerBitrise, LaunchApp, DiagramCreate
+
+**Why:** (1) Per-bot tool scoping — assign only relevant toolbelts to each bot via `bots.yaml`. (2) Avoid tool collision — when a repo's `.claude/settings.json` brings in the official Atlassian MCP, Foreman's Jira tools overlap with identical functionality. Domain separation lets you exclude `foreman-jira` for bots that already have the official MCP. (3) Reduce token noise — fewer tools in the system prompt means faster, cheaper, more focused responses.
+
+**Approach:** Extract each domain from `mcp-canvas.ts` into its own file (`mcp-jira.ts`, `mcp-confluence.ts`, etc.), each exporting a `createXxxMcpServer()` function. Update `mcp-canvas.ts` to compose them. Wire per-bot toolbelt selection through `bots.yaml` config.
+
+### Consolidate Bot Registry & Channel Routing
+Currently two separate "bots" files with confusing overlap:
+- **`bots.yaml`** (repo root, visible) — bot identity: name, type, model, system prompt, roster group
+- **`~/.foreman/bots.json`** (hidden in home dir) — FlowSpec channel routing: bot name → channel ID
+
+**Plan (Option B):**
+1. Move `~/.foreman/bots.json` → `config/channel-registry.yaml` (in repo, visible, version-controlled)
+2. Restructure as transport-grouped YAML:
+   ```yaml
+   # config/channel-registry.yaml — Where each bot lives, per transport
+   slack:
+     flowbot-01: C0AP5TEMBL2
+     flowbot-02: C0AP3RSGQJJ
+   mattermost:
+     flowbot-01: w3fkpfdzd38z5fkei3sdabnhyo
+     flowbot-02: witk91ucbjgh58buud53s6w83o
+   ```
+3. Update `flowspec/registry.ts` to read from `config/channel-registry.yaml` instead of `~/.foreman/bots.json`
+4. Delete `~/.foreman/bots.json` after migration
+
+**Why:** (1) Hidden state is undiscoverable — new devs can't find `~/.foreman/bots.json` without tribal knowledge. (2) Two files both named "bots" is confusing. (3) Identity (`bots.yaml`) and routing (`channel-registry.yaml`) are separate concerns — devs who only chat with bots never need the channel registry, but FlowSpec users do. (4) YAML is consistent with `bots.yaml` and human-readable. (5) Version-controlled means changes are tracked and reviewable.
+
+### FlowSpec Tutorial
+Create an interactive onboarding tutorial for new devs that covers:
+- What FlowSpec is and why it exists (orchestrating multi-bot workflows)
+- How the dispatch chain works: flow file → bot name → `bots.yaml` → channel ID → Temporal → bot
+- Writing your first flow file (inputs, assign, steps, collect)
+- Running workflows: `/f run`, `--name`, input parameters, `/f check`
+- Key concepts: categories don't matter, any channel can invoke, bots resolve by name not location
+- Debugging: where to look when a flow fails (Temporal UI, bot channel output, `foreman.err.log`)
+
+**Why:** FlowSpec is the most powerful and least documented part of Foreman. New devs (and new bots) need to understand the dispatch model to be effective. The questions from this session (does category matter? does invoking channel matter? which Jira tool wins?) are exactly what a tutorial should answer upfront.
+
+### Dynamic Bot Resolution (No-Reboot Bot Management)
+Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermost bot accounts + `mattermostBotTokens` in config. Adding a new bot requires creating a Mattermost bot account, adding its token to config, AND restarting Foreman.
+
+**Goal:** Adding a new bot to a workflow should never require a Foreman reboot. Resolve bot config dynamically from `channel-registry.yaml` → `bots.yaml` instead of from the startup cache.
+
+**Why this is hard today:** `identifyChannelBot()` matches channel members against `botUserMap` (keyed by Mattermost user ID). This means each bot identity needs its own Mattermost bot account. The Foreman bot can't serve as multiple identities because it always resolves to one config.
+
+**Possible approach:** Flip the lookup — instead of "which bot user is in this channel?", do "which bot name does this channel map to?" by reversing `channel-registry.yaml` at startup into a `channelId → botName` map. Then look up the bot definition from `bots.yaml`. This removes the need for per-bot Mattermost accounts entirely — one Foreman bot account could serve all channels with different personas.
+
+### Other
 - **Mobile-friendly layout** — collapsible sidebar, hamburger menu
 - **Ollama adapter** — local open source LLMs (Llama 3, Mistral, etc.) as bots in `bots.yaml`
 - **Dockerize Temporal** — add to docker-compose.yml
 - **Dockerize everything** — single `docker compose up` for full stack
 - **Image attachment in chat**
 - **FlowSpec workspace-aware bot namespace resolution** — `@claude-worker` resolves to `techops-2187/claude-worker` when run inside a workspace
+- **Enhance `/f session tools`** — list all available tools grouped by source (foreman toolbelts, project MCPs, Claude Code built-ins, plugins)
