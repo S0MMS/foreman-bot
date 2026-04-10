@@ -430,7 +430,7 @@ Foreman 2.0 adds Kafka/Redpanda as a bot-to-bot communication layer alongside th
 
 Bot types: `sdk` (Anthropic/OpenAI/Gemini), `webhook` (HTTP endpoint), `human` (Slack DM gate), `mock` (testing).
 
-Current bots: `foreman` (FlowSpec infrastructure), `betty`, `clive`, `gemini-worker`, `gpt-worker`, `claude-judge`, `test-double`.
+Current bots: `foreman` (FlowSpec infrastructure), `betty`, `clive`, `gemini-worker`, `gpt-worker`, `claude-judge`.
 
 ### config/channel-registry.yaml — FlowSpec Channel Routing
 `config/channel-registry.yaml` maps bot names to channel IDs, grouped by transport. FlowSpec reads this at runtime to dispatch workflows. This file is separate from `bots.yaml` because bot identity and channel routing are different concerns — not all devs who interact with bots will use FlowSpec.

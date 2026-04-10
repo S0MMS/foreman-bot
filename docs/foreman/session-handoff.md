@@ -77,7 +77,7 @@ To push any local doc to Confluence: pass the raw `.md` file content directly as
 ### Infrastructure (complete ✅)
 - **Docker Desktop** installed and running
 - **Redpanda** running via `docker compose up` — broker at `localhost:19092`, Console UI at `localhost:8080`
-- **Bot topics** auto-created on Foreman startup from `bots.yaml`: `betty.inbox/outbox`, `clive.inbox/outbox`, `gemini-worker.inbox/outbox`, `gpt-worker.inbox/outbox`, `claude-judge.inbox/outbox`, `test-double.inbox/outbox`
+- **Bot topics** auto-created on Foreman startup from `bots.yaml`: `betty.inbox/outbox`, `clive.inbox/outbox`, `gemini-worker.inbox/outbox`, `gpt-worker.inbox/outbox`, `claude-judge.inbox/outbox`
 - **Temporal** still runs natively: `temporal server start-dev` (Homebrew, port 7233, UI at 8233)
 
 ### New files (committed and pushed)

@@ -19,11 +19,13 @@ import { listWorkspaces } from './workspaces.js';
 
 export type BotType = 'sdk' | 'webhook' | 'agentcore' | 'human' | 'mock';
 export type SdkProvider = 'anthropic' | 'openai' | 'gemini';
+export type BotTransport = 'mattermost' | 'kafka';
 
 interface BotBase {
   type: BotType;
   system_prompt: string;
   roster?: string;
+  transport?: BotTransport;
 }
 
 export interface SdkBot extends BotBase {
@@ -62,6 +64,7 @@ export interface BotEntry {
   definition: BotDefinition;
   inboxTopic: string;
   outboxTopic: string;
+  transport: BotTransport;
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────────
@@ -137,6 +140,7 @@ export function loadBotRegistry(yamlPath?: string): Map<string, BotEntry> {
       definition,
       inboxTopic: `${name}.inbox`,
       outboxTopic: `${name}.outbox`,
+      transport: (def as any).transport === 'kafka' ? 'kafka' : 'mattermost',
     });
   }
 
@@ -170,6 +174,12 @@ export function getBotsByType(type: BotType): BotEntry[] {
 /** Check if a bot exists by name. */
 export function botExists(name: string): boolean {
   return getBotRegistry().has(name);
+}
+
+/** Get the transport for a bot by name. Returns 'mattermost' if bot not found. */
+export function getBotTransport(name: string): BotTransport {
+  const bot = getBotRegistry().get(name);
+  return bot?.transport ?? 'mattermost';
 }
 
 /** Get all Kafka topic names across all bots. */
@@ -208,6 +218,7 @@ export function registerWorkspaceBots(): void {
         definition,
         inboxTopic: `${topicPrefix}.inbox`,
         outboxTopic: `${topicPrefix}.outbox`,
+        transport: 'mattermost',
       });
       count++;
     }

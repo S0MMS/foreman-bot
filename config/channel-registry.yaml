@@ -27,3 +27,5 @@ mattermost:
   gemini-worker: pn47gtnjkfruxr3eqgzcz4yeqc
   gpt-worker: wzmi4n1yyt8wfya9c9aiiitsiy
   claude-judge: kzmg7j7fftdh5ksn4noxs9qnhw
+  gemini-verifier: ggmchrcxsiffuewit9h14p4nzy
+  collator: hsz4p4ne8igepb41ci396m414r

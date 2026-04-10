@@ -9,7 +9,9 @@ workflow "Pythia"
   -- Multi-model workers for true epistemic diversity
   -- Identical prompts to maximize independent coverage
   at the same time
-    ask @claude-worker """
+    ask @pythia-claude-worker """
+      Think deeply and thoroughly about this question. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
       {question}
 
       For every factual claim, cite your source:
@@ -19,7 +21,9 @@ workflow "Pythia"
       Tag each section HIGH/MEDIUM/LOW confidence.
     """ -> answer1
 
-    ask @gemini-worker """
+    ask @pythia-gemini-worker """
+      Think deeply and thoroughly about this question. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
       {question}
 
       For every factual claim, cite your source:
@@ -29,7 +33,9 @@ workflow "Pythia"
       Tag each section HIGH/MEDIUM/LOW confidence.
     """ -> answer2
 
-    ask @gpt-worker """
+    ask @pythia-gpt-worker """
+      Think deeply and thoroughly about this question. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
       {question}
 
       For every factual claim, cite your source:
@@ -43,7 +49,9 @@ workflow "Pythia"
   -- Dedicated judge with clean context (separate from Phase 1 explorer)
   -- Judge sees full reasoning chains (not summaries)
   -- Judge must self-structure before synthesizing
-  ask @claude-judge """
+  ask @pythia-claude-judge """
+    Think deeply and thoroughly about this task. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
     Three independent experts answered: "{question}"
 
     WORKER 1 (Claude): {answer1}
@@ -66,7 +74,9 @@ workflow "Pythia"
   -- Different models critique a synthesis they didn't produce
   -- Each model brings different training data and reasoning patterns
   at the same time
-    ask @claude-worker """
+    ask @pythia-claude-worker """
+      Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your analysis.
+
       A judge synthesized answers to: "{question}"
       Synthesis: {synthesis}
 
@@ -75,7 +85,9 @@ workflow "Pythia"
       Flag anything the judge accepted without proper evidence.
     """ -> critique_accuracy
 
-    ask @gemini-worker """
+    ask @pythia-gemini-worker """
+      Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your analysis.
+
       A judge synthesized answers to: "{question}"
       Synthesis: {synthesis}
 
@@ -84,7 +96,9 @@ workflow "Pythia"
       What questions does this answer leave unanswered?
     """ -> critique_completeness
 
-    ask @gpt-worker """
+    ask @pythia-gpt-worker """
+      Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your analysis.
+
       A judge synthesized answers to: "{question}"
       Synthesis: {synthesis}
 
@@ -96,7 +110,9 @@ workflow "Pythia"
     """ -> critique_adversarial
 
   -- PHASE 4: Targeted revision (not full regeneration)
-  ask @claude-judge """
+  ask @pythia-claude-judge """
+    Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your revision.
+
     Your synthesis of: "{question}"
     Was: {synthesis}
 
@@ -114,7 +130,9 @@ workflow "Pythia"
   -- PHASE 5: Independent fact-check (Chain of Verification)
   -- Dedicated verifier bot — separate channel, no shared history with @gemini-worker.
   -- Context isolation via identity, not session resets. See flowspec.md §6c.
-  ask @gemini-verifier """
+  ask @pythia-gemini-verifier """
+    Think deeply and thoroughly about this task. Take your time. Be exhaustive and meticulous in your verification.
+
     Verify every factual claim in this text.
     You have NO context about how this was produced.
     For each claim, check it independently using tools.
@@ -131,7 +149,9 @@ workflow "Pythia"
   """ -> verification
 
   -- Final output: compile full detailed report, then summarize for channel
-  ask @collator """
+  ask @pythia-collator """
+    Think deeply and thoroughly about this task. Take your time. Be comprehensive and precise.
+
     You are a research briefing assistant. A 5-phase multi-model analysis
     (Pythia) was just completed on this question: "{question}"
 
@@ -162,7 +182,7 @@ workflow "Pythia"
     write {detailed_report} to {output_file}
 
   -- Short summary for the channel
-  ask @collator """
+  ask @pythia-collator """
     You just produced a detailed report on: "{question}"
 
     Now give a SHORT executive summary — 3-5 paragraphs max.

@@ -12,11 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ HEALTHY
+## Current Health: ✅ STABLE — Kafka transport working (kafka-echo test bot confirmed)
 
-**Last known good commit:** `d1eb4c6`
-**Recent uncommitted changes:** `src/mattermost.ts` — (1) provision upsert logic, (2) removed hardcoded "flows" path from run/provision commands
-**Rollback:** `git checkout d1eb4c6 -- src/mattermost.ts && npm run build`
+**Last known good commit:** `8b9fb45`
+**Rollback:** `git checkout 8b9fb45 -- src/bots.ts bots.yaml src/mattermost.ts && npm run build`
 
 ---
 
@@ -26,7 +25,7 @@ type: project
 - **Redpanda**: running via `docker compose up` in `/Users/chris.shreve/claude-slack-bridge`
   - Kafka broker: `localhost:19092`
   - Console UI: `http://localhost:8080`
-- **Bot topics** auto-created on startup: `betty.inbox/outbox`, `clive.inbox/outbox`, `gemini-worker.inbox/outbox`, `gpt-worker.inbox/outbox`, `claude-judge.inbox/outbox`, `test-double.inbox/outbox`
+- **Bot topics** auto-created on startup: `betty.inbox/outbox`, `clive.inbox/outbox`, `gemini-worker.inbox/outbox`, `gpt-worker.inbox/outbox`, `claude-judge.inbox/outbox`
 - **Temporal**: runs natively via Homebrew (`temporal server start-dev`) — NOT in Docker
 
 ---
@@ -139,7 +138,7 @@ See [dead_man_protocol.md](dead_man_protocol.md) — Recovery Protocol section f
 | Component | Status |
 |---|---|
 | Mattermost + PostgreSQL in docker-compose | ✅ Running at `localhost:8065` |
-| 7 bot accounts (architect, betty, clive, gemini-worker, gpt-worker, claude-judge, test-double) | ✅ Created with tokens |
+| 6 bot accounts (architect, betty, clive, gemini-worker, gpt-worker, claude-judge) | ✅ Created with tokens |
 | `src/mattermost.ts` — WebSocket bridge (1:1 port of slack.ts) | ✅ |
 | Message handling (user → Claude → response) | ✅ |
 | /cc commands (cwd, model, name, session, new, stop, auto-approve, plugin) | ✅ |
@@ -156,6 +155,7 @@ See [dead_man_protocol.md](dead_man_protocol.md) — Recovery Protocol section f
 ### Still TODO
 - [x] **Verify FlowSpec workflows still run** — confirmed end-to-end in Mattermost (hello-world.flow + peer-review.flow)
 - [x] **Migrate memory files into Foreman** — done (2026-04-08), now in `docs/memory/`
+- [ ] **Message chunking for Mattermost** — `postMessage()` must split messages that exceed Mattermost's max post size (16,383 chars). Pythia Phase 2 (synthesis) and the collator (detailed report) routinely exceed this. Temporal activity `dispatchToBot` fails with 400 `message_length` error.
 - [ ] Port canvas commands to Mattermost
 - [ ] Port quorum/delphi/dispatch commands
 - [ ] MCP tools (PostMessage, ReadChannel) — add Mattermost variants
@@ -175,6 +175,9 @@ The original design for persistent conversations via Kafka log topics is saved i
 ---
 
 ## Phase 6 — Planned (future)
+
+### `/f reload-bots` — Hot-Reload Bot Registry
+Add a `/f reload-bots` command that re-reads `bots.yaml` and rebuilds the in-memory bot registry without restarting Foreman. Removes the need to reboot just to add/remove/modify a bot definition.
 
 ### MCP Toolbelt Decomposition
 Break the monolithic `foreman-toolbelt` (38 tools in `mcp-canvas.ts`) into domain-specific MCP servers:

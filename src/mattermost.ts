@@ -34,6 +34,8 @@ import { MODEL_ALIASES, generateCuteName } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { readConfig } from "./config.js";
 import { createCanvasMcpServer } from "./mcp-canvas.js";
+import { getBotTransport } from "./bots.js";
+import { callBotByName } from "./kafka.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -297,6 +299,40 @@ async function getForemanBotUserId(): Promise<string | null> {
     return me?.id || null;
   } catch {
     return null;
+  }
+}
+
+// ── Kafka Transport Handler ───────────────────────────────────────────────────
+
+/**
+ * Handle a message for a Kafka-transport bot.
+ * Produces to the bot's Kafka inbox, waits for the outbox response,
+ * and posts it back to the Mattermost channel (truncated if needed).
+ */
+async function handleKafkaTransportMessage(
+  channel: string,
+  text: string,
+  botConfig: BotConfig,
+): Promise<void> {
+  try {
+    console.log(`[mattermost] Kafka transport for ${botConfig.name}: dispatching via Kafka`);
+    const result = await callBotByName(botConfig.name, text);
+
+    const MAX_CHARS = 15_000;
+    let responseText = result || '(no response)';
+    if (responseText.length > MAX_CHARS) {
+      responseText = responseText.slice(0, MAX_CHARS) +
+        '\n\n... [truncated — full response available in Kafka]';
+    }
+
+    await postMessage(channel, responseText, botConfig.token);
+  } catch (err) {
+    console.error(`[mattermost] Kafka transport error for ${botConfig.name}:`, err);
+    await postMessage(
+      channel,
+      `Kafka transport error: ${err instanceof Error ? err.message : String(err)}`,
+      botConfig.token,
+    );
   }
 }
 
@@ -767,7 +803,11 @@ function connectWebSocket(): void {
       };
 
       try {
-        await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost, botConfig ?? undefined);
+        if (botConfig && getBotTransport(botConfig.name) === 'kafka') {
+          await handleKafkaTransportMessage(channel, processedText, botConfig);
+        } else {
+          await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost, botConfig ?? undefined);
+        }
       } catch (err) {
         await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
         try {

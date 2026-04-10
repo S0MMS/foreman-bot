@@ -117,3 +117,11 @@ bots:
     type: mock
     response: "Mock response — this bot is a test double."
     system_prompt: "Returns a canned response. Use for testing workflows."
+
+  # ── Kafka Transport Test Bot ────────────────────────────────────────────────
+
+  kafka-echo:
+    type: mock
+    transport: kafka
+    response: "Hello from Kafka transport! This message was routed through Redpanda."
+    system_prompt: "You are a test bot for validating Kafka transport routing."
