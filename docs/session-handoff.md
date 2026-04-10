@@ -1,45 +1,27 @@
-# Session Handoff — 2026-04-10 (Temporal Dockerization)
+# Session Handoff — 2026-04-10 (Single-Bot Channel Routing)
 
 ## What we were working on
-Dockerizing Temporal so `docker compose up` starts the full stack. This is Step 1 of making Foreman distributable to PMs/POs — no Homebrew dependencies, just clone + docker compose up.
+Making Foreman distributable. Prerequisite: switch from per-bot Mattermost accounts to one foreman bot serving all channels via channel-registry.yaml routing.
 
-## What was done this session
-1. Created `docker/init-temporal-db.sql` — creates `temporal` + `temporal_visibility` databases in Postgres
-2. Added `temporal` (temporalio/auto-setup) and `temporal-ui` services to `docker-compose.yml`
-   - Blue/green test ports: Temporal gRPC on 7244, UI on 8244 (Homebrew still on 7233)
-   - Fixed dynamic config issue: set `SKIP_DYNAMIC_CONFIG_UPDATE: "true"`
-   - Fixed healthcheck: uses `tctl --address $(hostname -i):7233 cluster health`
-3. Updated `src/temporal/client.ts` — uses `process.env.TEMPORAL_ADDRESS || 'localhost:7233'`
-4. Updated `src/temporal/worker.ts` — explicit `NativeConnection` with same env var
-5. Build passes. Smoke test passes (Foreman starts, connects to Docker Temporal on 7244).
-6. Docker Temporal is running and healthy: `docker ps` shows `foreman-temporal (healthy)`
-7. Manually created `temporal` and `temporal_visibility` databases in existing Postgres
+## What was done
+1. Replaced `botUserMap` (user-ID-based routing) with `channelBotMap` (channel-registry-based routing) in `src/mattermost.ts`
+2. `identifyChannelBot()` is now a synchronous map lookup instead of an async API call
+3. `buildChannelBotMap()` reads channel-registry.yaml at startup and maps channelId → BotConfig
+4. Added `MM_FOREMAN_USER_ID` discovery at startup for reactions/typing
+5. All channels use the single foreman bot token (`MM_FOREMAN_TOKEN`)
+6. Build passes, smoke test passes
 
 ## Where we left off
-Added `TEMPORAL_ADDRESS=localhost:7244` to launchd plist and rebooting Foreman.
-If Foreman comes back, run `/f run flows/flowspec-tutorial.flow` as acceptance test.
+About to reboot Foreman to test the new routing.
 
-**Rollback if Foreman won't start:**
-1. Remove the `TEMPORAL_ADDRESS` key+value from `~/Library/LaunchAgents/com.foreman.bot.plist`
-2. `launchctl unload ~/Library/LaunchAgents/com.foreman.bot.plist`
-3. `launchctl load ~/Library/LaunchAgents/com.foreman.bot.plist`
-
-## Key design decisions
-- Blue/green approach: Docker Temporal on alternate ports (7244/8244) alongside Homebrew (7233)
-- `TEMPORAL_ADDRESS` env var — runtime config, no rebuild needed
-- Shared Postgres with Mattermost (same container, separate databases)
-- After acceptance test passes: switch Docker ports to 7233/8233, stop Homebrew Temporal
-
-## Rollback if Foreman won't start
+## Rollback
 ```bash
-git checkout 5c453c9 -- src/temporal/client.ts src/temporal/worker.ts
+git checkout 1051261 -- src/mattermost.ts
 npm run build
-node dist/index.js   # no env var = falls back to Homebrew Temporal on 7233
+# Then reboot Foreman
 ```
 
 ## Next steps after reboot
-1. Verify Foreman is healthy (health endpoint, bot responses)
-2. Run `/f run flows/flowspec-tutorial.flow` — all 7 lessons must pass
-3. If pass: switch Docker Temporal to port 7233, stop Homebrew Temporal
-4. Commit all changes
-5. Continue with distribution plan (bootstrap script, onboarding guide)
+1. Verify Foreman responds in existing channels (flowbot-01, etc.)
+2. Verify DM with Architect still works
+3. If pass: commit, then start building bootstrap script + bot definitions

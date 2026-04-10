@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — fully Dockerized (including Temporal)
+## Current Health: ✅ STABLE — single-bot channel routing active (7 channels mapped)
 
-**Last known good commit:** `5c453c9`
-**Rollback:** `git checkout 5c453c9 -- src/temporal/client.ts src/temporal/worker.ts docker-compose.yml && npm run build`
+**Last known good commit:** `1051261`
+**Rollback:** `git checkout 1051261 -- src/mattermost.ts bots.yaml config/channel-registry.yaml && npm run build`
 
 ---
 
@@ -216,11 +216,56 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 
 **Minimum viable:** model + auto-approve per channel. Could later extend to timeouts, tool scoping, etc.
 
+### 🔥 Bootstrap Script — Make Foreman Distributable (Priority #1)
+
+**Goal:** New user clones the repo, runs `docker compose up` + bootstrap script, and has a fully working Foreman with organized channels and bots. Target audience: PMs and POs, not just engineers.
+
+**Key design decision:** One `foreman` Mattermost bot account serves all channels via persona switching. No per-bot Mattermost accounts (except Architect DM). Channels ARE the bot interface — every bot is a channel, every channel can participate in FlowSpec workflows.
+
+**Bootstrap script creates:**
+
+| Category | Channels | Notes |
+|---|---|---|
+| **DM** | Architect | Foreman bot's DM — system admin |
+| **General** | `#thought-pad`, `#alice`, `#bob`, `#charlie` | Everyday use, brainstorming, ad-hoc tasks |
+| **Specialists** | `#flowspec-engineer`, `#gemini`, `#openai` | FlowSpec help, multi-provider demo |
+| **Tutorial** | `#flowbot-01`, `#flowbot-02`, `#flowbot-03` | Used by `flowspec-tutorial.flow` |
+| **TECHOPS-2187** | workspace channels | Real-world FlowSpec example |
+| **Pythia** | pythia channels | Scaffolded — needs Kafka transport port before full functionality |
+
+**What the script does:**
+1. Create `foreman` Mattermost bot account (if not exists)
+2. Create all channels listed above
+3. Invite `foreman` bot to every channel
+4. Write `channel-registry.yaml` with channel ID → bot mappings
+5. Write `config.json` with bot token
+6. Create Mattermost sidebar categories (General, Specialists, Tutorial, TECHOPS-2187, Pythia) per user — API: `POST /api/v4/users/{user_id}/teams/{team_id}/channels/categories`
+7. Add all users to all channels
+
+**Bot definitions (in bots.yaml):**
+- `alice`, `bob`, `charlie` — general-purpose Claude SDK bots
+- `thought-pad` — brainstorming/rubber-duck bot
+- `flowspec-engineer` — specialist with access to `.flow` files, helps write FlowSpec workflows
+- `gemini` — Google Gemini bot (demonstrates multi-provider)
+- `openai` — OpenAI GPT bot (demonstrates multi-provider)
+- `flowbot-01/02/03` — generic tutorial bots
+- TECHOPS-2187 workspace bots (already defined)
+- Pythia bots (scaffolded)
+
+**Prerequisite work:**
+- [x] Single-bot-account channel routing — `foreman` bot responds as different personas per channel ✅ Done (2026-04-10)
+- [ ] Bootstrap script implementation
+- [ ] Bot definitions in `bots.yaml` for all out-of-the-box bots
+- [ ] Onboarding guide (README or CLAUDE.md section)
+
+### ~~Dockerize Temporal~~ ✅ Done (2026-04-10)
+Temporal + Temporal UI in docker-compose.yml, blue/green tested, all 7 FlowSpec tutorial lessons passed.
+
 ### Other
 - **Mobile access via tunnel** — expose Mattermost to phone via ngrok, Tailscale, or Cloudflare Tunnel so the Mattermost iOS app can connect (replaces custom mobile layout idea)
 - **Ollama adapter** — local open source LLMs (Llama 3, Mistral, etc.) as bots in `bots.yaml`
-- ~~**Dockerize Temporal**~~ ✅ Done (2026-04-10) — Temporal + Temporal UI in docker-compose.yml, blue/green tested, all 7 FlowSpec tutorial lessons passed
 - **Dockerize everything** — single `docker compose up` for full stack
 - **Image attachment in chat**
 - **FlowSpec workspace-aware bot namespace resolution** — `@claude-worker` resolves to `techops-2187/claude-worker` when run inside a workspace
 - **Enhance `/f session tools`** — list all available tools grouped by source (foreman toolbelts, project MCPs, Claude Code built-ins, plugins)
+- **Port Pythia to Kafka transport** — Pythia responses exceed Mattermost 16K char limit; needs `transport: kafka` per bot

@@ -34,8 +34,9 @@ import { MODEL_ALIASES, generateCuteName } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { readConfig } from "./config.js";
 import { createCanvasMcpServer } from "./mcp-canvas.js";
-import { getBotTransport } from "./bots.js";
+import { getBotTransport, getBotRegistry } from "./bots.js";
 import { callBotByName } from "./kafka.js";
+import { loadRawRegistry } from "./flowspec/registry.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ let MM_BOT_TOKENS: Record<string, string> = {};
 let MM_ARCHITECT_TOKEN = "";
 let MM_ARCHITECT_USER_ID = "";
 let MM_FOREMAN_TOKEN = "";
+let MM_FOREMAN_USER_ID = "";
 // Mattermost runs in Docker — it calls this URL when a button is clicked.
 // "localhost" inside Docker = the container, not the host. Use host.docker.internal to reach host.
 let MM_ACTION_URL = "http://host.docker.internal:3001";
@@ -59,28 +61,34 @@ let MM_ACTION_URL = "http://host.docker.internal:3001";
 // Map of Mattermost bot user IDs — messages from these are filtered out
 const botUserIds = new Set<string>();
 
-// Bot routing: mmUserId → bot config (name, system prompt, token)
+// Bot routing: channelId → bot config (name, system prompt, token)
+// Built from channel-registry.yaml at startup — one foreman bot serves all channels.
 interface BotConfig { name: string; displayName: string; systemPrompt: string; token: string; userId: string; }
-const botUserMap = new Map<string, BotConfig>();
-// Cache channel → bot so we don't re-fetch members every message
-const channelBotCache = new Map<string, BotConfig | null>();
+const channelBotMap = new Map<string, BotConfig>();
 
-async function identifyChannelBot(channelId: string): Promise<BotConfig | null> {
-  if (channelBotCache.has(channelId)) return channelBotCache.get(channelId)!;
-  try {
-    const members = await mmFetch("GET", `/channels/${channelId}/members?per_page=50`, undefined, MM_ADMIN_TOKEN);
-    if (Array.isArray(members)) {
-      for (const member of members) {
-        const cfg = botUserMap.get(member.user_id);
-        if (cfg) {
-          channelBotCache.set(channelId, cfg);
-          return cfg;
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  // Don't cache null — allow retries (bot may not be initialized on first call)
-  return null;
+function identifyChannelBot(channelId: string): BotConfig | null {
+  return channelBotMap.get(channelId) ?? null;
+}
+
+/** Rebuild channel→bot routing from channel-registry.yaml + bots.yaml.
+ *  Called at startup and can be called again to hot-reload. */
+function buildChannelBotMap(): void {
+  channelBotMap.clear();
+  const rawRegistry = loadRawRegistry();
+  const mmChannels = rawRegistry.mattermost || {};
+  for (const [botName, channelId] of Object.entries(mmChannels)) {
+    const botEntry = getBotRegistry().get(botName);
+    if (!botEntry) continue;
+    const displayName = botName.charAt(0).toUpperCase() + botName.slice(1);
+    channelBotMap.set(channelId, {
+      name: botName,
+      displayName,
+      systemPrompt: botEntry.definition.system_prompt,
+      token: MM_FOREMAN_TOKEN,  // single foreman bot token for all channels
+      userId: MM_FOREMAN_USER_ID || MM_ARCHITECT_USER_ID || "",  // foreman bot's user ID for reactions
+    });
+  }
+  console.log(`[mattermost] Channel→bot routing: ${channelBotMap.size} channels mapped from registry`);
 }
 
 // ── REST API helpers ──────────────────────────────────────────────────────────
@@ -765,7 +773,7 @@ function connectWebSocket(): void {
 
       // Handle /f commands — either from registered slash command or typed as text
       if (text.startsWith("/f ") || text === "/f") {
-        const fBotConfig = await identifyChannelBot(channel);
+        const fBotConfig = identifyChannelBot(channel);
         try {
           await handleCommand(channel, text, requesterId, fBotConfig?.token);
         } catch (err) {
@@ -778,7 +786,7 @@ function connectWebSocket(): void {
       const processedText = text.startsWith("!") ? "/" + text.slice(1) : text;
 
       // Identify which bot (if any) owns this channel — routes persona + token + reactions
-      const botConfig = await identifyChannelBot(channel);
+      const botConfig = identifyChannelBot(channel);
       const reactUserId = botConfig?.userId ?? MM_ARCHITECT_USER_ID;
       const reactToken = botConfig?.token ?? MM_ARCHITECT_TOKEN;
 
@@ -890,11 +898,10 @@ export function handleSlashCommand(req: any, res: any): void {
   const { channel_id, text, user_id } = req.body;
   res.json({ response_type: "ephemeral", text: "" }); // immediate ACK
   const fullText = `/f ${(text || "").trim()}`.trim();
-  identifyChannelBot(channel_id).then(botConfig => {
-    const botToken = botConfig?.token;
-    handleCommand(channel_id, fullText, user_id, botToken).catch(err => {
-      postMessage(channel_id, `Error: ${err instanceof Error ? err.message : String(err)}`, botToken).catch(() => {});
-    });
+  const botConfig = identifyChannelBot(channel_id);
+  const botToken = botConfig?.token;
+  handleCommand(channel_id, fullText, user_id, botToken).catch(err => {
+    postMessage(channel_id, `Error: ${err instanceof Error ? err.message : String(err)}`, botToken).catch(() => {});
   });
 }
 
@@ -922,7 +929,7 @@ export async function startMattermostBridge(): Promise<void> {
     console.warn("[mattermost] No foreman bot token — FlowSpec Mattermost dispatch will fail");
   }
 
-  // Discover architect bot's user ID (needed for reactions + typing indicator)
+  // Discover architect bot's user ID (needed for DM reactions + typing indicator)
   try {
     const me = await mmFetch("GET", "/users/me", undefined, MM_ARCHITECT_TOKEN);
     MM_ARCHITECT_USER_ID = me.id;
@@ -931,27 +938,30 @@ export async function startMattermostBridge(): Promise<void> {
     console.warn("[mattermost] Could not fetch architect user ID:", (err as Error).message);
   }
 
-  // Discover bot user IDs so we can filter their messages + build routing map
+  // Discover foreman bot's user ID (needed for channel reactions + typing indicator)
+  if (MM_FOREMAN_TOKEN) {
+    try {
+      const me = await mmFetch("GET", "/users/me", undefined, MM_FOREMAN_TOKEN);
+      MM_FOREMAN_USER_ID = me.id;
+      console.log(`[mattermost] Foreman bot user ID: ${MM_FOREMAN_USER_ID}`);
+    } catch (err) {
+      console.warn("[mattermost] Could not fetch foreman user ID:", (err as Error).message);
+    }
+  }
+
+  // Discover bot user IDs so we can filter their messages (ignore bot-to-bot)
   try {
     const bots = await mmFetch("GET", "/bots?per_page=200");
-    const { getAllBots } = await import("./bots.js");
-    const botDefMap = new Map(getAllBots().map(b => [b.name, b.definition]));
     for (const bot of bots) {
       botUserIds.add(bot.user_id);
-      // Build routing map for bots that have a token + system_prompt
-      const botName: string = bot.username; // e.g. "betty"
-      const token = MM_BOT_TOKENS[botName];
-      const def = botDefMap.get(botName);
-      if (token && def?.system_prompt && bot.user_id !== MM_ARCHITECT_USER_ID) {
-        const displayName = botName.charAt(0).toUpperCase() + botName.slice(1);
-        botUserMap.set(bot.user_id, { name: botName, displayName, systemPrompt: def.system_prompt, token, userId: bot.user_id });
-        console.log(`[mattermost] Bot routing: ${displayName} → ${bot.user_id}`);
-      }
     }
     console.log(`[mattermost] Registered ${botUserIds.size} bot user IDs for filtering`);
   } catch (err) {
     console.warn("[mattermost] Could not fetch bot list:", (err as Error).message);
   }
+
+  // Build channel→bot routing from channel-registry.yaml + bots.yaml
+  buildChannelBotMap();
 
   // Auto-register /f slash command
   await registerSlashCommand();
