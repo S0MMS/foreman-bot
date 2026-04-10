@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — Kafka transport working (kafka-echo test bot confirmed)
+## Current Health: ✅ STABLE — fully Dockerized (including Temporal)
 
-**Last known good commit:** `8b9fb45`
-**Rollback:** `git checkout 8b9fb45 -- src/bots.ts bots.yaml src/mattermost.ts && npm run build`
+**Last known good commit:** `5c453c9`
+**Rollback:** `git checkout 5c453c9 -- src/temporal/client.ts src/temporal/worker.ts docker-compose.yml && npm run build`
 
 ---
 
@@ -26,7 +26,9 @@ type: project
   - Kafka broker: `localhost:19092`
   - Console UI: `http://localhost:8080`
 - **Bot topics** auto-created on startup: `betty.inbox/outbox`, `clive.inbox/outbox`, `gemini-worker.inbox/outbox`, `gpt-worker.inbox/outbox`, `claude-judge.inbox/outbox`
-- **Temporal**: runs natively via Homebrew (`temporal server start-dev`) — NOT in Docker
+- **Temporal**: running via `docker compose up` (temporalio/auto-setup with Postgres backend)
+  - gRPC: `localhost:7233`
+  - Dashboard: `http://localhost:8233`
 
 ---
 
@@ -217,7 +219,7 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 ### Other
 - **Mobile access via tunnel** — expose Mattermost to phone via ngrok, Tailscale, or Cloudflare Tunnel so the Mattermost iOS app can connect (replaces custom mobile layout idea)
 - **Ollama adapter** — local open source LLMs (Llama 3, Mistral, etc.) as bots in `bots.yaml`
-- **Dockerize Temporal** — add to docker-compose.yml
+- ~~**Dockerize Temporal**~~ ✅ Done (2026-04-10) — Temporal + Temporal UI in docker-compose.yml, blue/green tested, all 7 FlowSpec tutorial lessons passed
 - **Dockerize everything** — single `docker compose up` for full stack
 - **Image attachment in chat**
 - **FlowSpec workspace-aware bot namespace resolution** — `@claude-worker` resolves to `techops-2187/claude-worker` when run inside a workspace

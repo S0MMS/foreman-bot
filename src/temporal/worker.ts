@@ -4,9 +4,12 @@
  */
 
 export async function startTemporalWorker(): Promise<void> {
-  const { Worker } = await import('@temporalio/worker');
+  const { Worker, NativeConnection } = await import('@temporalio/worker');
   const activities = await import('./activities.js');
+  const address = process.env.TEMPORAL_ADDRESS || 'localhost:7233';
+  const connection = await NativeConnection.connect({ address });
   const worker = await Worker.create({
+    connection,
     workflowsPath: new URL('./workflows.js', import.meta.url).pathname,
     activities,
     taskQueue: 'foreman',

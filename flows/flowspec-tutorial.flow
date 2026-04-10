@@ -19,38 +19,38 @@
 -- HOW TO RUN (from Mattermost):
 --
 --   Lesson 1 — Hello World:
---     /f run flowspec-tutorial.flow
+--     /f run flows/flowspec-tutorial.flow
 --
 --   Lesson 2 — Haiku:
---     /f run flowspec-tutorial.flow --name "Haiku"
---     /f run flowspec-tutorial.flow --name "Haiku" topic="cats"
---     /f run flowspec-tutorial.flow --name "Haiku" topic="the meaning of life"
+--     /f run flows/flowspec-tutorial.flow --name "Haiku"
+--     /f run flows/flowspec-tutorial.flow --name "Haiku" topic="cats"
+--     /f run flows/flowspec-tutorial.flow --name "Haiku" topic="the meaning of life"
 --
 --   Lesson 3 — Echo:
---     /f run flowspec-tutorial.flow --name "Echo"
---     /f run flowspec-tutorial.flow --name "Echo" message="Hello from FlowSpec!"
+--     /f run flows/flowspec-tutorial.flow --name "Echo"
+--     /f run flows/flowspec-tutorial.flow --name "Echo" message="Hello from FlowSpec!"
 --
 --   Lesson 4 — Two Perspectives:
---     /f run flowspec-tutorial.flow --name "Two Perspectives"
---     /f run flowspec-tutorial.flow --name "Two Perspectives" topic="tabs vs spaces"
+--     /f run flows/flowspec-tutorial.flow --name "Two Perspectives"
+--     /f run flows/flowspec-tutorial.flow --name "Two Perspectives" topic="tabs vs spaces"
 --
 --   Lesson 5 — Peer Review:
---     /f run flowspec-tutorial.flow --name "Peer Review"
---     /f run flowspec-tutorial.flow --name "Peer Review" topic="why Rust will replace C++"
+--     /f run flows/flowspec-tutorial.flow --name "Peer Review"
+--     /f run flows/flowspec-tutorial.flow --name "Peer Review" topic="why Rust will replace C++"
 --
 --   Lesson 6 — Parallel Research:
---     /f run flowspec-tutorial.flow --name "Parallel Research"
---     /f run flowspec-tutorial.flow --name "Parallel Research" topic="quantum computing"
+--     /f run flows/flowspec-tutorial.flow --name "Parallel Research"
+--     /f run flows/flowspec-tutorial.flow --name "Parallel Research" topic="quantum computing"
 --
 --   Lesson 7 — Quality Loop:
---     /f run flowspec-tutorial.flow --name "Quality Loop"
---     /f run flowspec-tutorial.flow --name "Quality Loop" topic="the importance of code review"
+--     /f run flows/flowspec-tutorial.flow --name "Quality Loop"
+--     /f run flows/flowspec-tutorial.flow --name "Quality Loop" topic="the importance of code review"
 --
 -- HOW TO RUN (from Slack):
 --
---   /cc run flowspec-tutorial.flow "Hello World"
---   /cc run flowspec-tutorial.flow "Haiku" topic="cats"
---   /cc run flowspec-tutorial.flow "Echo" message="Hello from FlowSpec!"
+--   /cc run flows/flowspec-tutorial.flow "Hello World"
+--   /cc run flows/flowspec-tutorial.flow "Haiku" topic="cats"
+--   /cc run flows/flowspec-tutorial.flow "Echo" message="Hello from FlowSpec!"
 --
 -- ============================================================================
 
@@ -65,7 +65,7 @@
 --   - ask (dispatch a prompt to a bot and wait for the response)
 --
 -- Try it:
---   /f run flowspec-tutorial.flow
+--   /f run flows/flowspec-tutorial.flow
 
 workflow "Hello World"
   ask @flowbot-01 "Say hello to the world."
@@ -84,8 +84,8 @@ workflow "Hello World"
 --   - send (fire-and-forget — just posts text, no bot session)
 --
 -- Try it:
---   /f run flowspec-tutorial.flow --name "Haiku"
---   /f run flowspec-tutorial.flow --name "Haiku" topic=cats
+--   /f run flows/flowspec-tutorial.flow --name "Haiku"
+--   /f run flows/flowspec-tutorial.flow --name "Haiku" topic=cats
 
 workflow "Haiku"
   inputs: topic (default "the weather")
@@ -99,8 +99,8 @@ workflow "Haiku"
 -- echoed back through a bot. If you don't pass anything, the default is used.
 --
 -- Try it:
---   /f run flowspec-tutorial.flow --name "Echo"
---   /f run flowspec-tutorial.flow --name "Echo" message=Hello from FlowSpec!
+--   /f run flows/flowspec-tutorial.flow --name "Echo"
+--   /f run flows/flowspec-tutorial.flow --name "Echo" message=Hello from FlowSpec!
 --
 -- Concepts introduced:
 --   - required vs default inputs

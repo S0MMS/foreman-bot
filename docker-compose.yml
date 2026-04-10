@@ -1,5 +1,5 @@
 # Foreman 2.0 Infrastructure
-# Starts Redpanda + Mattermost — Temporal runs natively via Homebrew (temporal server start-dev)
+# Starts Redpanda + Mattermost + Temporal — all services in Docker.
 #
 # Usage:
 #   docker compose up -d        # start everything in background
@@ -10,10 +10,11 @@
 #   Redpanda broker   → localhost:19092  (Kafka wire protocol — Foreman connects here)
 #   Redpanda Console  → localhost:8080   (web UI — watch bot messages here)
 #   Mattermost        → localhost:8065   (chat UI — talk to bots here)
-#   PostgreSQL        → localhost:5432   (Mattermost database — internal)
+#   PostgreSQL        → localhost:5432   (Mattermost + Temporal database)
+#   Temporal server   → localhost:7233   (workflow engine — Foreman connects here)
+#   Temporal UI       → localhost:8233   (workflow dashboard)
 #
 # Everything else runs natively:
-#   Temporal server   → temporal server start-dev   (localhost:7233)
 #   Foreman           → npm run dev
 
 services:
@@ -75,6 +76,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./docker/init-temporal-db.sql:/docker-entrypoint-initdb.d/init-temporal-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
       interval: 10s
@@ -115,6 +117,42 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  # ── Temporal Server ──────────────────────────────────────────────────────────
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: foreman-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: mmuser
+      POSTGRES_PWD: mmuser_password
+      POSTGRES_SEEDS: postgres
+      SKIP_DYNAMIC_CONFIG_UPDATE: "true"
+    ports:
+      - "7233:7233"       # Temporal gRPC — Foreman connects here
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address $(hostname -i):7233 cluster health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── Temporal UI ─────────────────────────────────────────────────────────────
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: foreman-temporal-ui
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+    ports:
+      - "8233:8080"       # Temporal dashboard → localhost:8233
 
 volumes:
   redpanda-data:
