@@ -1,27 +1,25 @@
-# Session Handoff — 2026-04-10 (Single-Bot Channel Routing)
+# Session Handoff — 2026-04-10 (Bootstrap Script)
 
 ## What we were working on
-Making Foreman distributable. Prerequisite: switch from per-bot Mattermost accounts to one foreman bot serving all channels via channel-registry.yaml routing.
+Making Foreman distributable to PMs/POs. Created and tested the bootstrap script that automates full Mattermost setup.
 
-## What was done
-1. Replaced `botUserMap` (user-ID-based routing) with `channelBotMap` (channel-registry-based routing) in `src/mattermost.ts`
-2. `identifyChannelBot()` is now a synchronous map lookup instead of an async API call
-3. `buildChannelBotMap()` reads channel-registry.yaml at startup and maps channelId → BotConfig
-4. Added `MM_FOREMAN_USER_ID` discovery at startup for reactions/typing
-5. All channels use the single foreman bot token (`MM_FOREMAN_TOKEN`)
-6. Build passes, smoke test passes
+## What was completed
+1. Bootstrap script (`scripts/bootstrap.sh`) — creates foreman bot, 10 channels, sidebar categories, writes channel-registry.yaml and config.json. Idempotent.
+2. Fixed two bugs in bootstrap: (a) log messages polluting stdout captures (added `>&2`), (b) existing non-bootstrap channels being wiped from registry (now preserved).
+3. Fixed macOS compatibility: changed from `#!/usr/bin/env bash` to `#!/usr/bin/env zsh` because macOS bash 3.x doesn't support `declare -A`.
+4. Six new bot definitions added to bots.yaml: thought-pad, alice, bob, charlie, gemini, openai.
+5. Smoke test confirmed all 18 bots load correctly.
 
 ## Where we left off
-About to reboot Foreman to test the new routing.
+About to reboot Foreman so it picks up the new channel-registry mappings and bot definitions. Dead Man Protocol Step 5 — awaiting user approval.
 
-## Rollback
-```bash
-git checkout 1051261 -- src/mattermost.ts
-npm run build
-# Then reboot Foreman
-```
+## Uncommitted changes
+- `config/channel-registry.yaml` — 6 new channel IDs
+- `bots.yaml` — 6 new bot definitions
+- `scripts/bootstrap.sh` — new file
+- `src/mattermost.ts` — debug logging removed (from prior session)
 
 ## Next steps after reboot
-1. Verify Foreman responds in existing channels (flowbot-01, etc.)
-2. Verify DM with Architect still works
-3. If pass: commit, then start building bootstrap script + bot definitions
+- Test new channels (thought-pad, alice, bob, charlie, gemini, openai)
+- Commit all uncommitted changes
+- Onboarding guide for new users

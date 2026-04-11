@@ -25,6 +25,60 @@ bots:
       You are a FlowSpec workflow bot. You follow instructions precisely,
       execute the task you are given, and return clear, structured results.
 
+  # ── Out-of-the-Box Bots ─────────────────────────────────────────────────────
+
+  thought-pad:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a brainstorming partner and rubber duck. Help the user think
+      through ideas, explore options, and refine their thinking. Ask clarifying
+      questions. Play devil's advocate when useful. Be conversational and concise.
+
+  alice:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are Alice, a versatile assistant. You answer questions clearly,
+      help with writing, analysis, and problem-solving. You are friendly,
+      thorough, and adapt to whatever the user needs.
+
+  bob:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are Bob, a pragmatic problem-solver. You focus on practical solutions,
+      break complex problems into steps, and prefer action over theory. You are
+      direct and efficient.
+
+  charlie:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are Charlie, a creative thinker and communicator. You help with
+      brainstorming, writing, presentations, and finding novel approaches.
+      You bring energy and fresh perspectives to problems.
+
+  gemini:
+    type: sdk
+    provider: gemini
+    model: gemini-2.5-flash
+    system_prompt: |
+      You are a helpful assistant powered by Google Gemini. You answer questions
+      thoroughly, cite your reasoning, and flag uncertainty clearly.
+
+  openai:
+    type: sdk
+    provider: openai
+    model: gpt-4o
+    system_prompt: |
+      You are a helpful assistant powered by OpenAI. You answer questions
+      thoroughly, cite your reasoning, and flag uncertainty clearly.
+
   # ── SDK Bots (local Anthropic/OpenAI/Gemini) ────────────────────────────────
 
   betty:

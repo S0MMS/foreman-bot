@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — single-bot channel routing active (7 channels mapped)
+## Current Health: ✅ STABLE — bootstrap complete, 13 channels mapped, 18 bots loaded
 
-**Last known good commit:** `1051261`
-**Rollback:** `git checkout 1051261 -- src/mattermost.ts bots.yaml config/channel-registry.yaml && npm run build`
+**Last known good commit:** `1cbd9be`
+**Rollback:** `git checkout 1cbd9be -- bots.yaml config/channel-registry.yaml && npm run build`
 
 ---
 
@@ -214,6 +214,18 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 
 **Possible locations for the config:** per-workspace config file (e.g. `workspaces/techops-2187/channels.yaml`), or inline in the `.flow` file itself, or in `bots.yaml`. Workspace level is likely best since the same bot may need different settings in different workflows.
 
+### Handy — Speech-to-Text for Driving Claude Code / Foreman
+Open source Mac tool for local, offline speech-to-text (no cloud, no API cost). Uses Parakeet V3 by default, also supports Whisper small/large. Hold a hotkey to record, release to transcribe — text appears at cursor in any app including Claude Code terminal and Mattermost. Chintan Patel (MFP) uses it ~100x/day with F19 hotkey. Find it on GitHub by searching "Handy speech to text". Good candidate for driving Foreman workflows hands-free.
+
+### Mattermost Mobile Access via Tailscale
+Install Tailscale on Mac + phone to connect the Mattermost app from anywhere. LAN IP (`192.168.0.106:8065`) works on same WiFi as a simpler alternative. Tailscale gives a stable private hostname that works from any network.
+
+### Token Usage in Stats Footer
+Add input/output token counts to the `Done in N turns | $X.XXXX | Xs` footer. Claude Agent SDK already returns token usage in response metadata. Proposed format: `Done in 4 turns | $0.0234 | 1,204 in / 1,643 out | 12s`
+
+### Foreman Command Center (BI Layer Approach)
+Instead of building a custom dashboard UI, pipe Temporal + Kafka data into Postgres tables (`workflows`, `workflow_steps`, `bot_messages`) via a small sync job, then point a BI tool (Grafana, Metabase, or Datadog — already in MFP stack) at it. Gets fleet dashboard, workflow drill-down, cost analysis, and per-bot metrics with zero frontend code. Correlation ID joins Temporal events to Kafka messages. Only custom piece needed: a lightweight "Analyze with Architect" page that takes a workflow ID and hands full context to the Architect for AI-assisted root cause analysis and improvement suggestions.
+
 **Minimum viable:** model + auto-approve per channel. Could later extend to timeouts, tool scoping, etc.
 
 ### 🔥 Bootstrap Script — Make Foreman Distributable (Priority #1)
@@ -229,7 +241,7 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 | **DM** | Architect | Foreman bot's DM — system admin |
 | **General** | `#thought-pad`, `#alice`, `#bob`, `#charlie` | Everyday use, brainstorming, ad-hoc tasks |
 | **Specialists** | `#flowspec-engineer`, `#gemini`, `#openai` | FlowSpec help, multi-provider demo |
-| **Tutorial** | `#flowbot-01`, `#flowbot-02`, `#flowbot-03` | Used by `flowspec-tutorial.flow` |
+| **FlowSpec Tutorial** | `#flowbot-01`, `#flowbot-02`, `#flowbot-03` | Used by `flowspec-tutorial.flow` |
 | **TECHOPS-2187** | workspace channels | Real-world FlowSpec example |
 | **Pythia** | pythia channels | Scaffolded — needs Kafka transport port before full functionality |
 
@@ -239,7 +251,7 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 3. Invite `foreman` bot to every channel
 4. Write `channel-registry.yaml` with channel ID → bot mappings
 5. Write `config.json` with bot token
-6. Create Mattermost sidebar categories (General, Specialists, Tutorial, TECHOPS-2187, Pythia) per user — API: `POST /api/v4/users/{user_id}/teams/{team_id}/channels/categories`
+6. Create Mattermost sidebar categories (General, Specialists, FlowSpec Tutorial, TECHOPS-2187, Pythia) per user — API: `POST /api/v4/users/{user_id}/teams/{team_id}/channels/categories`
 7. Add all users to all channels
 
 **Bot definitions (in bots.yaml):**
@@ -252,10 +264,12 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 - TECHOPS-2187 workspace bots (already defined)
 - Pythia bots (scaffolded)
 
+**Naming convention:** Channel display names match their slugs exactly (lowercase-hyphenated). What you see in the sidebar is what you type in a `.flow` file. Clarity over aesthetics.
+
 **Prerequisite work:**
 - [x] Single-bot-account channel routing — `foreman` bot responds as different personas per channel ✅ Done (2026-04-10)
-- [ ] Bootstrap script implementation
-- [ ] Bot definitions in `bots.yaml` for all out-of-the-box bots
+- [x] Bootstrap script implementation ✅ Done (2026-04-11) — `scripts/bootstrap.sh`, idempotent, tested
+- [x] Bot definitions in `bots.yaml` for all out-of-the-box bots ✅ Done (2026-04-11)
 - [ ] Onboarding guide (README or CLAUDE.md section)
 
 ### ~~Dockerize Temporal~~ ✅ Done (2026-04-10)
