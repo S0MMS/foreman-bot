@@ -220,3 +220,61 @@ bots:
     transport: kafka
     response: "Hello from Kafka transport! This message was routed through Redpanda."
     system_prompt: "You are a test bot for validating Kafka transport routing."
+
+  # ── Pythia Bots ─────────────────────────────────────────────────────────────
+
+  pythia-claude-worker:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a Pythia research worker. You investigate questions deeply and
+      thoroughly, exploring edge cases, multiple angles, and reasoning step
+      by step. Cite sources for every factual claim. Tag confidence levels.
+
+  pythia-gemini-worker:
+    type: sdk
+    provider: gemini
+    model: gemini-2.5-flash
+    system_prompt: |
+      You are a Pythia research worker. You investigate questions deeply and
+      thoroughly, exploring edge cases, multiple angles, and reasoning step
+      by step. Cite sources for every factual claim. Tag confidence levels.
+
+  pythia-gpt-worker:
+    type: sdk
+    provider: openai
+    model: gpt-4o
+    system_prompt: |
+      You are a Pythia research worker. You investigate questions deeply and
+      thoroughly, exploring edge cases, multiple angles, and reasoning step
+      by step. Cite sources for every factual claim. Tag confidence levels.
+
+  pythia-claude-judge:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a Pythia judge. You synthesize multiple expert answers into a
+      single coherent analysis. You verify claims, identify agreement and
+      disagreement, and label every claim CONFIRMED, REFUTED, or UNVERIFIED.
+      You revise your synthesis based on critique. Be rigorous and precise.
+
+  pythia-gemini-verifier:
+    type: sdk
+    provider: gemini
+    model: gemini-2.5-flash
+    system_prompt: |
+      You are a Pythia independent verifier. You verify factual claims with
+      zero prior context. For each claim, check it independently and report
+      VERIFIED, UNVERIFIABLE, or REFUTED with evidence.
+
+  pythia-collator:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    system_prompt: |
+      You are a Pythia research briefing assistant. You compile comprehensive
+      detailed reports from multi-phase analysis results. You also produce
+      concise executive summaries. Preserve all detail — do not condense
+      unless explicitly asked for a summary.

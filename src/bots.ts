@@ -154,6 +154,12 @@ export function getBotRegistry(): Map<string, BotEntry> {
   return registry;
 }
 
+/** Force-reload the bot registry from bots.yaml. Returns the new registry size. */
+export function reloadBotRegistry(): number {
+  registry = loadBotRegistry();
+  return registry.size;
+}
+
 /** Get a single bot by name. Throws if not found. */
 export function getBot(name: string): BotEntry {
   const bot = getBotRegistry().get(name);

@@ -73,18 +73,18 @@ export async function resetBotSession(channelId: string): Promise<void> {
 /** Read a file from disk. Path must be absolute. */
 export async function readFlowFile(filePath: string): Promise<string> {
   const { readFileSync } = await import('fs');
-  const { isAbsolute } = await import('path');
-  if (!isAbsolute(filePath)) throw new Error(`readFlowFile requires an absolute path, got: ${filePath}`);
-  return readFileSync(filePath, 'utf-8');
+  const { isAbsolute, resolve } = await import('path');
+  const absPath = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+  return readFileSync(absPath, 'utf-8');
 }
 
 /** Write content to a file on disk. Path must be absolute. */
 export async function writeFlowFile(filePath: string, content: string): Promise<void> {
   const { writeFileSync, mkdirSync } = await import('fs');
-  const { isAbsolute, dirname } = await import('path');
-  if (!isAbsolute(filePath)) throw new Error(`writeFlowFile requires an absolute path, got: ${filePath}`);
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, content, 'utf-8');
+  const { isAbsolute, dirname, resolve } = await import('path');
+  const absPath = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+  mkdirSync(dirname(absPath), { recursive: true });
+  writeFileSync(absPath, content, 'utf-8');
 }
 
 // ── FlowSpec ─────────────────────────────────────────────────────────────────

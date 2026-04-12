@@ -34,7 +34,7 @@ import { MODEL_ALIASES, generateCuteName } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { readConfig } from "./config.js";
 import { createCanvasMcpServer } from "./mcp-canvas.js";
-import { getBotTransport, getBotRegistry } from "./bots.js";
+import { getBotTransport, getBotRegistry, reloadBotRegistry } from "./bots.js";
 import { callBotByName } from "./kafka.js";
 import { loadRawRegistry } from "./flowspec/registry.js";
 
@@ -274,12 +274,14 @@ async function processChannelMessage(
 
   // Post response — Markdown works natively in Mattermost (no format conversion!)
   const responseText = result.result || "(no response)";
-  // Mattermost max post size is ~16383 chars, chunk if needed
-  const chunks = responseText.length > 15000
-    ? responseText.match(/.{1,15000}/gs) || [responseText]
-    : [responseText];
-  for (const chunk of chunks) {
-    await postMessage(channel, chunk, botToken);
+  const MM_MAX_POST = 15000;
+  if (responseText.length <= MM_MAX_POST) {
+    await postMessage(channel, responseText, botToken);
+  } else {
+    // Truncate for channel display — full response is still returned to caller
+    const truncated = responseText.slice(0, MM_MAX_POST)
+      + `\n\n---\n*[Truncated — full response is ${responseText.length} chars. Captured in workflow variable.]*`;
+    await postMessage(channel, truncated, botToken);
   }
 
   if (result.cost > 0) {
@@ -353,7 +355,11 @@ async function handleKafkaTransportMessage(
  */
 export async function processChannelMessageForFlowSpec(channelId: string, prompt: string): Promise<string> {
   const token = getForemanToken();
-  await postMessage(channelId, `📋 *FlowSpec dispatch:*\n${prompt}`, token);
+  const MM_MAX_POST = 15000;
+  const displayPrompt = prompt.length > MM_MAX_POST
+    ? prompt.slice(0, 2000) + `\n\n---\n*[Prompt truncated — full prompt is ${prompt.length} chars]*`
+    : prompt;
+  await postMessage(channelId, `📋 *FlowSpec dispatch:*\n${displayPrompt}`, token);
   // Build a synthetic BotConfig so processChannelMessage uses the foreman token
   // throughout all closures (onProgress, onApprovalNeeded, response posting).
   // System prompt and model will come from the channel's session config (workspace).
@@ -469,6 +475,13 @@ async function handleCommand(channel: string, text: string, userId: string, botT
         `- Plugins: ${plugins.length === 0 ? "none" : plugins.map(p => p.split("/").pop()).join(", ")}`,
         `- Foreman: v${FOREMAN_VERSION} | SDK: v${SDK_VERSION}`,
       ].join("\n"));
+      break;
+    }
+
+    case "load-registry": {
+      const botCount = reloadBotRegistry();
+      buildChannelBotMap();
+      await respond(`Registry reloaded: ${botCount} bots, ${channelBotMap.size} channels mapped.`);
       break;
     }
 
