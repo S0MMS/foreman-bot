@@ -1,0 +1,21 @@
+workflow "Test Read Write"
+  inputs: base_dir
+
+  -- Step 1: Write a test file
+  ask @flowbot-01 "Reply with exactly this text and nothing else: Hello from FlowSpec read-write test" -> test_content
+
+  -- Step 2: Write it to disk using a quoted path with variable interpolation
+  write {test_content} to "{base_dir}/test-output.md"
+
+  -- Step 3: Read it back
+  read "{base_dir}/test-output.md" -> read_back
+
+  -- Step 4: Confirm it worked
+  ask @flowbot-01 """
+    I wrote a file and read it back. Here is what I got:
+    {read_back}
+
+    Does this look correct? Reply with YES or NO.
+  """ -> confirmation
+
+  send #flowbot-01 "Read-write test complete. Confirmation: {confirmation}"

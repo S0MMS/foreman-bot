@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — bootstrap complete, 13 channels mapped, 18 bots loaded
+## Current Health: ✅ STABLE — prompt + response truncation live, Pythia V ready to re-test
 
-**Last known good commit:** `1cbd9be`
-**Rollback:** `git checkout 1cbd9be -- bots.yaml config/channel-registry.yaml && npm run build`
+**Last known good commit:** `3a9afe6`
+**Rollback:** `git checkout 3a9afe6 -- src/mattermost.ts && npm run build`
 
 ---
 

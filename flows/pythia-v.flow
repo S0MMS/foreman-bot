@@ -1,0 +1,202 @@
+workflow "Pythia V"
+  inputs: question, question_file, base_dir, mode (default "code")
+
+  -- Load question from file if question_file was provided
+  if {question_file} is not empty
+    read {question_file} -> question
+
+  -- PHASE 1: Independent exploration (diversity)
+  -- Multi-model workers for true epistemic diversity
+  -- Identical prompts to maximize independent coverage
+  at the same time
+    ask @pythia-claude-worker """
+      Think deeply and thoroughly about this question. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
+      {question}
+
+      For every factual claim, cite your source:
+      - Code: file_path:line_number
+      - Knowledge: [FROM KNOWLEDGE]
+      - Uncertain: [UNCERTAIN: reason]
+      Tag each section HIGH/MEDIUM/LOW confidence.
+    """ -> answer1
+
+    ask @pythia-gemini-worker """
+      Think deeply and thoroughly about this question. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
+      {question}
+
+      For every factual claim, cite your source:
+      - Code: file_path:line_number
+      - Knowledge: [FROM KNOWLEDGE]
+      - Uncertain: [UNCERTAIN: reason]
+      Tag each section HIGH/MEDIUM/LOW confidence.
+    """ -> answer2
+
+    ask @pythia-gpt-worker """
+      Think deeply and thoroughly about this question. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
+      {question}
+
+      For every factual claim, cite your source:
+      - Code: file_path:line_number
+      - Knowledge: [FROM KNOWLEDGE]
+      - Uncertain: [UNCERTAIN: reason]
+      Tag each section HIGH/MEDIUM/LOW confidence.
+    """ -> answer3
+
+  -- PHASE 2: Synthesis + Verification (structured verification)
+  -- Dedicated judge with clean context (separate from Phase 1 explorer)
+  -- Judge sees full reasoning chains (not summaries)
+  -- Judge must self-structure before synthesizing
+  ask @pythia-claude-judge """
+    Think deeply and thoroughly about this task. Take your time. Explore edge cases, consider multiple angles, and reason step by step before forming your conclusions.
+
+    Three independent experts answered: "{question}"
+
+    WORKER 1 (Claude): {answer1}
+    WORKER 2 (Gemini): {answer2}
+    WORKER 3 (GPT): {answer3}
+
+    Before writing your synthesis:
+    1. List areas where all workers AGREE
+    2. List areas where workers DISAGREE (with each position)
+    3. List claims made by only ONE worker
+
+    Then for each claim: verify it yourself using tools.
+    Label every claim CONFIRMED, REFUTED, or UNVERIFIED.
+    Write your synthesis using only CONFIRMED claims.
+    Flag UNVERIFIED claims explicitly as uncertain.
+    Include a Confidence & Caveats section at the end.
+  """ -> synthesis
+
+  -- Save synthesis to disk (too large for Mattermost channels)
+  write {synthesis} to "{base_dir}/phase2-synthesis.md"
+
+  -- Post a brief summary to the channel instead of the full synthesis
+  ask @pythia-claude-judge """
+    You just completed a synthesis of multi-model research on: "{question}"
+
+    Provide a 3-5 paragraph summary of your key findings, areas of
+    agreement and disagreement between the workers, and your confidence levels.
+    End with: "Full synthesis written to {base_dir}/phase2-synthesis.md"
+  """ -> synthesis_summary
+
+  -- PHASE 3: Heterogeneous critique (adversarial pressure)
+  -- Different models critique a synthesis they didn't produce
+  -- Each model brings different training data and reasoning patterns
+  at the same time
+    ask @pythia-claude-worker """
+      Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your analysis.
+
+      A judge synthesized answers to: "{question}"
+      Synthesis: {synthesis}
+
+      YOUR ROLE: Verify FACTUAL ACCURACY.
+      Check specific claims against the actual code/sources.
+      Flag anything the judge accepted without proper evidence.
+    """ -> critique_accuracy
+
+    ask @pythia-gemini-worker """
+      Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your analysis.
+
+      A judge synthesized answers to: "{question}"
+      Synthesis: {synthesis}
+
+      YOUR ROLE: Check COMPLETENESS.
+      What important aspects did the judge miss entirely?
+      What questions does this answer leave unanswered?
+    """ -> critique_completeness
+
+    ask @pythia-gpt-worker """
+      Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your analysis.
+
+      A judge synthesized answers to: "{question}"
+      Synthesis: {synthesis}
+
+      YOUR ROLE: DEVIL'S ADVOCATE.
+      Find the strongest argument that the key conclusions are wrong.
+      Focus on unsupported claims, unstated assumptions, underestimated risks.
+      If it's strong, explain WHY and what would have to be true for it to fail.
+      Do not soften valid criticisms.
+    """ -> critique_adversarial
+
+  -- PHASE 4: Targeted revision (not full regeneration)
+  ask @pythia-claude-judge """
+    Think deeply and thoroughly about this task. Take your time. Be rigorous and meticulous in your revision.
+
+    Your synthesis of: "{question}"
+    Was: {synthesis}
+
+    Three critics reviewed it:
+    ACCURACY CHECK (Claude): {critique_accuracy}
+    COMPLETENESS CHECK (Gemini): {critique_completeness}
+    DEVIL'S ADVOCATE (GPT): {critique_adversarial}
+
+    Address ONLY the substantive issues raised.
+    Do not rewrite sections that weren't challenged.
+    For contested claims, provide stronger evidence or mark as uncertain.
+    End with an updated Confidence & Caveats section.
+  """ -> revised
+
+  -- PHASE 5: Independent fact-check (Chain of Verification)
+  -- Dedicated verifier bot — separate channel, no shared history with @gemini-worker.
+  -- Context isolation via identity, not session resets. See flowspec.md §6c.
+  ask @pythia-gemini-verifier """
+    Think deeply and thoroughly about this task. Take your time. Be exhaustive and meticulous in your verification.
+
+    Verify every factual claim in this text.
+    You have NO context about how this was produced.
+    For each claim, check it independently using tools.
+
+    TEXT TO VERIFY:
+    {revised}
+
+    For each claim you check, output:
+    VERIFIED: [claim] — [evidence]
+    UNVERIFIABLE: [claim] — [what you looked for]
+    REFUTED: [claim] — [what's actually true]
+
+    Then output a VERIFICATION SUMMARY with counts.
+  """ -> verification
+
+  -- Final output: compile full detailed report, then summarize for channel
+  ask @pythia-collator """
+    Think deeply and thoroughly about this task. Take your time. Be comprehensive and precise.
+
+    You are a research briefing assistant. A 5-phase multi-model analysis
+    (Pythia) was just completed on this question: "{question}"
+
+    Here is the final revised answer:
+    {revised}
+
+    ---
+    INDEPENDENT VERIFICATION:
+    {verification}
+    ---
+
+    Produce a COMPREHENSIVE DETAILED REPORT. Include:
+    - Executive summary
+    - All findings, recommendations, and analysis from the revised answer
+    - All corrections and false citations that were caught
+    - The full verification results (VERIFIED, UNVERIFIABLE, REFUTED counts and details)
+    - Confidence levels and caveats
+    - Any open questions or gaps
+
+    Do NOT summarize or condense. Preserve all detail from the revised answer.
+    If the verification found REFUTED claims, call them out explicitly.
+    If claims are UNVERIFIABLE, say so rather than presenting them as fact.
+    Format with clear markdown headers and structure.
+  """ -> detailed_report
+
+  -- Save full detailed report to disk (too large for Mattermost channels)
+  write {detailed_report} to "{base_dir}/phase3-collator.md"
+
+  -- Short summary for the channel
+  ask @pythia-collator """
+    You just produced a detailed report on: "{question}"
+
+    Now give a SHORT executive summary — 3-5 paragraphs max.
+    Hit the key findings, biggest risks, and top recommendations only.
+    End with: "Full detailed report written to {base_dir}/phase3-collator.md"
+  """ -> summary
