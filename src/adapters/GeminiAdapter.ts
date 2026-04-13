@@ -54,13 +54,27 @@ export class GeminiAdapter implements AgentAdapter {
     return new GoogleGenerativeAI(apiKey);
   }
 
+  private hasApiKey(): boolean {
+    const config = readConfig();
+    return !!(config.geminiApiKey || process.env.GEMINI_API_KEY);
+  }
+
+  private noKeyResponse(): QueryResult {
+    return {
+      result: "**Gemini API key not configured.**\n\nTo enable this channel, set your API key:\n```\nexport GEMINI_API_KEY=your-key-here\nnpm run setup\n```\nOr add `\"geminiApiKey\": \"your-key\"` to `~/.foreman/config.json`.",
+      sessionId: "", cost: 0, turns: 0, tokensIn: 0, tokensOut: 0,
+    };
+  }
+
   async start(options: AgentOptions & { cwd: string; name: string }): Promise<QueryResult> {
+    if (!this.hasApiKey()) return this.noKeyResponse();
     this.histories.set(options.channelId, []);
     saveHistoriesToDisk(this.histories);
     return this.chat(options);
   }
 
   async resume(options: AgentOptions & { sessionId: string; cwd: string; name: string }): Promise<QueryResult> {
+    if (!this.hasApiKey()) return this.noKeyResponse();
     return this.chat(options);
   }
 

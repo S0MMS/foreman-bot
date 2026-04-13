@@ -2,15 +2,20 @@
 #
 # bootstrap.sh — Set up Foreman from scratch
 #
-# Creates the foreman bot account, all channels, sidebar categories,
-# and writes config files. Run after `docker compose up -d`.
+# Auto-creates admin account (fresh install), foreman bot, all channels,
+# sidebar categories, and writes config files. No browser interaction needed
+# on a fresh Docker Compose install.
 #
 # Usage:
-#   ./scripts/bootstrap.sh
+#   ANTHROPIC_API_KEY=sk-ant-... ./scripts/bootstrap.sh
+#
+# Environment variables (read from env, or existing config.json):
+#   ANTHROPIC_API_KEY  — required for Claude bots
+#   GEMINI_API_KEY     — optional, for Gemini bots
+#   OPENAI_API_KEY     — optional, for GPT bots
 #
 # Prerequisites:
 #   - Docker containers running (docker compose up -d)
-#   - Mattermost admin credentials (created during first Mattermost login)
 #
 # The script is idempotent — safe to run multiple times.
 
@@ -50,7 +55,43 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
+# ── Collect API keys from environment ────────────────────────────────────────
+
+ANTHROPIC_KEY="${ANTHROPIC_API_KEY:-}"
+GEMINI_KEY="${GEMINI_API_KEY:-}"
+OPENAI_KEY="${OPENAI_API_KEY:-}"
+
+# Also check existing config for keys
+if [ -f "$CONFIG_FILE" ]; then
+  [ -z "$ANTHROPIC_KEY" ] && ANTHROPIC_KEY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('anthropicApiKey',''))" 2>/dev/null || echo "")
+  [ -z "$GEMINI_KEY" ] && GEMINI_KEY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('geminiApiKey',''))" 2>/dev/null || echo "")
+  [ -z "$OPENAI_KEY" ] && OPENAI_KEY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('openaiApiKey',''))" 2>/dev/null || echo "")
+fi
+
+echo ""
+log "API Keys:"
+if [ -n "$ANTHROPIC_KEY" ]; then
+  log "  Anthropic: ${ANTHROPIC_KEY:0:10}...  ✓"
+else
+  warn "  Anthropic: not set (required for Claude bots)"
+  warn "  Set ANTHROPIC_API_KEY and re-run, or add to ~/.foreman/config.json later"
+fi
+if [ -n "$GEMINI_KEY" ]; then
+  log "  Gemini:    ${GEMINI_KEY:0:10}...  ✓"
+else
+  warn "  Gemini:    not set (optional — gemini channels will show setup instructions)"
+fi
+if [ -n "$OPENAI_KEY" ]; then
+  log "  OpenAI:    ${OPENAI_KEY:0:10}...  ✓"
+else
+  warn "  OpenAI:    not set (optional — gpt channels will show setup instructions)"
+fi
+
 # ── Get admin credentials ────────────────────────────────────────────────────
+
+ADMIN_USERNAME="foreman-admin"
+ADMIN_EMAIL="admin@foreman.local"
+ADMIN_PASSWORD=""
 
 # Check if config already exists with admin token
 if [ -f "$CONFIG_FILE" ]; then
@@ -69,32 +110,108 @@ fi
 
 if [ -z "${ADMIN_TOKEN:-}" ]; then
   echo ""
-  echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-  echo -e "${BLUE}  Mattermost Admin Setup${NC}"
-  echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-  echo ""
-  echo "  If this is a fresh Mattermost install, you need to create an"
-  echo "  admin account first:"
-  echo ""
-  echo "    1. Open $MM_URL in your browser"
-  echo "    2. Create your admin account"
-  echo "    3. Create a team (any name works)"
-  echo ""
-  echo "  Then generate a personal access token:"
-  echo ""
-  echo "    1. Click your avatar → Profile"
-  echo "    2. Security → Personal Access Tokens"
-  echo "    3. Create a token with 'admin' description"
-  echo ""
-  read -rp "  Paste your admin access token: " ADMIN_TOKEN
-  echo ""
+  log "Setting up Mattermost admin account..."
 
-  # Verify token
-  if ! curl -sf -H "Authorization: Bearer $ADMIN_TOKEN" "$MM_URL/api/v4/users/me" > /dev/null 2>&1; then
-    err "Invalid token. Please check and try again."
-    exit 1
+  # Check if any users exist — if not, this is a fresh install and we can auto-create
+  USER_COUNT=$(curl -sf "$MM_URL/api/v4/users/stats" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_users_count',0))" 2>/dev/null || echo "0")
+
+  if [ "$USER_COUNT" = "0" ]; then
+    # Fresh install — auto-create admin account
+    ADMIN_PASSWORD=$(python3 -c "import secrets,string; print('F0r3man!' + secrets.token_hex(8))")
+    log "  Fresh Mattermost install detected — creating admin account..."
+
+    CREATE_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/users" \
+      -H "Content-Type: application/json" \
+      -d "{\"email\":\"$ADMIN_EMAIL\",\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" 2>/dev/null || echo "")
+
+    if [ -z "$CREATE_RESULT" ]; then
+      err "Failed to create admin account. Is Mattermost running?"
+      exit 1
+    fi
+
+    ADMIN_USER_ID_CREATED=$(echo "$CREATE_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+    if [ -z "$ADMIN_USER_ID_CREATED" ]; then
+      err "Failed to create admin account: $CREATE_RESULT"
+      exit 1
+    fi
+
+    # Promote to system admin
+    curl -sf -X PUT "$MM_URL/api/v4/users/$ADMIN_USER_ID_CREATED/roles" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer placeholder" \
+      -d '{"roles":"system_admin system_user"}' > /dev/null 2>&1 || true
+
+    # Login to get a session token
+    LOGIN_RESULT=$(curl -sf -D - -X POST "$MM_URL/api/v4/users/login" \
+      -H "Content-Type: application/json" \
+      -d "{\"login_id\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" 2>/dev/null || echo "")
+
+    SESSION_TOKEN=$(echo "$LOGIN_RESULT" | grep -i "^token:" | tr -d '[:space:]' | cut -d: -f2)
+
+    if [ -z "$SESSION_TOKEN" ]; then
+      err "Failed to login as admin. Create account manually at $MM_URL"
+      exit 1
+    fi
+
+    # Generate a personal access token using the session
+    PAT_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/users/$ADMIN_USER_ID_CREATED/tokens" \
+      -H "Authorization: Bearer $SESSION_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"description":"foreman-bootstrap"}' 2>/dev/null || echo "")
+
+    ADMIN_TOKEN=$(echo "$PAT_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+
+    if [ -z "$ADMIN_TOKEN" ]; then
+      err "Failed to generate admin access token. Create account manually at $MM_URL"
+      exit 1
+    fi
+
+    log "  Admin account created: $ADMIN_USERNAME"
+    log "  Admin password: $ADMIN_PASSWORD (save this!)"
+  else
+    # Users exist — try to log in with known credentials, or ask for token
+    log "  Existing Mattermost install detected ($USER_COUNT users)"
+
+    # Try login with default credentials (from a previous setup run)
+    LOGIN_RESULT=$(curl -sf -D - -X POST "$MM_URL/api/v4/users/login" \
+      -H "Content-Type: application/json" \
+      -d "{\"login_id\":\"$ADMIN_USERNAME\",\"password\":\"${FOREMAN_ADMIN_PASSWORD:-notset}\"}" 2>/dev/null || echo "")
+
+    SESSION_TOKEN=$(echo "$LOGIN_RESULT" | grep -i "^token:" | tr -d '[:space:]' | cut -d: -f2)
+
+    if [ -n "$SESSION_TOKEN" ]; then
+      # Get user ID from session
+      ADMIN_USER_INFO=$(curl -sf -H "Authorization: Bearer $SESSION_TOKEN" "$MM_URL/api/v4/users/me" 2>/dev/null || echo "")
+      ADMIN_USER_ID_CREATED=$(echo "$ADMIN_USER_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+      # Generate a personal access token
+      PAT_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/users/$ADMIN_USER_ID_CREATED/tokens" \
+        -H "Authorization: Bearer $SESSION_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"description":"foreman-bootstrap"}' 2>/dev/null || echo "")
+
+      ADMIN_TOKEN=$(echo "$PAT_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+    fi
+
+    if [ -z "${ADMIN_TOKEN:-}" ]; then
+      echo ""
+      echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+      echo -e "${BLUE}  Mattermost Admin Token Needed${NC}"
+      echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+      echo ""
+      echo "  Open $MM_URL → Your Avatar → Profile → Security"
+      echo "  → Personal Access Tokens → Create Token"
+      echo ""
+      read -rp "  Paste your admin access token: " ADMIN_TOKEN
+      echo ""
+
+      if ! curl -sf -H "Authorization: Bearer $ADMIN_TOKEN" "$MM_URL/api/v4/users/me" > /dev/null 2>&1; then
+        err "Invalid token. Please check and try again."
+        exit 1
+      fi
+      log "  Admin token verified."
+    fi
   fi
-  log "Admin token verified."
 fi
 
 # Get admin user info
@@ -109,10 +226,19 @@ TEAMS=$(curl -sf -H "Authorization: Bearer $ADMIN_TOKEN" "$MM_URL/api/v4/teams")
 TEAM_ID=$(echo "$TEAMS" | python3 -c "import sys,json; teams=json.load(sys.stdin); print(teams[0]['id'] if teams else '')")
 
 if [ -z "$TEAM_ID" ]; then
-  err "No teams found. Please create a team in Mattermost first."
-  exit 1
+  log "No teams found — creating 'Foreman' team..."
+  TEAM_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/teams" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"foreman","display_name":"Foreman","type":"O"}')
+  TEAM_ID=$(echo "$TEAM_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+  if [ -z "$TEAM_ID" ]; then
+    err "Failed to create team."
+    exit 1
+  fi
+  log "  Created team 'Foreman' ($TEAM_ID)"
 fi
-TEAM_NAME=$(echo "$TEAMS" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['display_name'])")
+TEAM_NAME=$(echo "$TEAMS" | python3 -c "import sys,json; teams=json.load(sys.stdin); print(teams[0]['display_name'] if teams else 'Foreman')")
 log "Using team: $TEAM_NAME ($TEAM_ID)"
 
 # ── Helper functions ──────────────────────────────────────────────────────────
@@ -335,41 +461,41 @@ log "Writing config.json..."
 
 mkdir -p "$CONFIG_DIR"
 
-if [ -f "$CONFIG_FILE" ]; then
-  # Update existing config — preserve all existing keys
-  python3 -c "
-import json
+# Build config with API keys + Mattermost settings
+python3 -c "
+import json, os
 
-with open('$CONFIG_FILE') as f:
-    config = json.load(f)
+config = {}
+if os.path.exists('$CONFIG_FILE'):
+    with open('$CONFIG_FILE') as f:
+        config = json.load(f)
 
 config['mattermostUrl'] = '$MM_URL'
 config['mattermostAdminToken'] = '$ADMIN_TOKEN'
 config['mattermostTeamId'] = '$TEAM_ID'
+config['defaultCwd'] = '$REPO_ROOT'
 
 tokens = config.get('mattermostBotTokens', {})
 tokens['foreman'] = '$FOREMAN_TOKEN'
 config['mattermostBotTokens'] = tokens
 
+# API keys — set from env if available, preserve existing if not
+anthropic_key = '$ANTHROPIC_KEY'
+gemini_key = '$GEMINI_KEY'
+openai_key = '$OPENAI_KEY'
+
+if anthropic_key:
+    config['anthropicApiKey'] = anthropic_key
+if gemini_key:
+    config['geminiApiKey'] = gemini_key
+if openai_key:
+    config['openaiApiKey'] = openai_key
+
 with open('$CONFIG_FILE', 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 "
-  log "  Updated existing $CONFIG_FILE"
-else
-  cat > "$CONFIG_FILE" << JSON
-{
-  "mattermostUrl": "$MM_URL",
-  "mattermostAdminToken": "$ADMIN_TOKEN",
-  "mattermostTeamId": "$TEAM_ID",
-  "mattermostBotTokens": {
-    "foreman": "$FOREMAN_TOKEN"
-  },
-  "defaultCwd": "$REPO_ROOT"
-}
-JSON
-  log "  Created $CONFIG_FILE"
-fi
+log "  Written to $CONFIG_FILE"
 
 # ── Create sidebar categories ────────────────────────────────────────────────
 
@@ -458,13 +584,22 @@ for entry in "${CHANNELS[@]}"; do
   IFS='|' read -r name display purpose <<< "$entry"
   echo "    #$name — $purpose"
 done
+if [ -n "$ADMIN_PASSWORD" ]; then
+  echo ""
+  echo -e "  ${YELLOW}Mattermost login credentials (save these!):${NC}"
+  echo "    Username: $ADMIN_USERNAME"
+  echo "    Password: $ADMIN_PASSWORD"
+fi
+echo ""
+echo "  API keys:"
+[ -n "$ANTHROPIC_KEY" ] && echo -e "    Anthropic: ${GREEN}configured${NC}" || echo -e "    Anthropic: ${YELLOW}not set — set ANTHROPIC_API_KEY${NC}"
+[ -n "$GEMINI_KEY" ]    && echo -e "    Gemini:    ${GREEN}configured${NC}" || echo -e "    Gemini:    ${YELLOW}not set (optional)${NC}"
+[ -n "$OPENAI_KEY" ]    && echo -e "    OpenAI:    ${GREEN}configured${NC}" || echo -e "    OpenAI:    ${YELLOW}not set (optional)${NC}"
 echo ""
 echo "  Next steps:"
-echo "    1. Build Foreman:  npm run build"
-echo "    2. Start Foreman:  node dist/index.js"
-echo "    3. Open Mattermost: $MM_URL"
-echo "    4. DM the 'foreman' bot for the Architect"
-echo "    5. Try a model: message #claude, #gemini, or #gpt"
-echo "    6. Try general chat: message #alice or #thought-pad"
-echo "    7. Run the tutorial: /f run flows/flowspec-tutorial.flow"
+echo "    1. npm start"
+echo "    2. Open $MM_URL"
+echo "    3. Login as $ADMIN_USERNAME"
+echo "    4. Message any channel — #claude, #gemini, #gpt, #alice, etc."
+echo "    5. Run the FlowSpec tutorial: /f run flows/flowspec-tutorial.flow"
 echo ""

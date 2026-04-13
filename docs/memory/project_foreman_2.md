@@ -12,12 +12,10 @@ type: project
 
 ---
 
-## Current Health: ⚠️ REBOOTING — auto_approve support in bots.yaml
+## Current Health: ✅ STABLE — auto_approve from bots.yaml, provider/model auto-init
 
-**Change:** Added `auto_approve` field to SdkBot type. `buildChannelBotMap` applies it at startup. All 21 SDK bots set to `auto_approve: true`.
-**Files changed:** `src/bots.ts`, `src/mattermost.ts`, `bots.yaml`
-**Last known good commit:** `413b1ae`
-**Rollback:** `git checkout 413b1ae -- src/bots.ts src/mattermost.ts bots.yaml && npm run build`
+**Last known good commit:** `6a561f6`
+**Rollback:** `git checkout 6a561f6 -- src/bots.ts src/mattermost.ts bots.yaml && npm run build`
 
 ---
 
@@ -215,6 +213,28 @@ Currently `mattermost.ts` builds a static `botUserMap` at startup from Mattermos
 `/f provision` currently creates channels and registers them, but channel runtime settings (model, auto-approve, etc.) must be configured manually afterward. Extend provisioning to declare per-channel config so workflows are ready to run hands-free.
 
 **Possible locations for the config:** per-workspace config file (e.g. `workspaces/techops-2187/channels.yaml`), or inline in the `.flow` file itself, or in `bots.yaml`. Workspace level is likely best since the same bot may need different settings in different workflows.
+
+### Workflow Channel — Conversational Multi-Model Council
+A new channel type where every message automatically triggers a named FlowSpec workflow and posts the synthesized result back conversationally — no `/f run` needed, no workflow awareness required. From the user's perspective it feels identical to chatting with a single bot. Primary use case: the Dual Council (Sonnet + Opus answer in parallel → Sonnet synthesizer → final answer). Complements the Slack Architect (single Sonnet) and Mattermost Architect (single Opus) without replacing either.
+
+**What's already done:**
+- `council-sonnet` (claude-sonnet-4-6), `council-opus` (claude-opus-4-6), `council-synth` (claude-sonnet-4-6) added to `bots.yaml`
+- `flows/dual-council.flow` written — uses `at the same time` for parallel Sonnet+Opus, synthesizer combines both
+
+**What still needs to be built (requires Dead Man Protocol + reboot):**
+
+| File | Change |
+|---|---|
+| `src/bots.ts` | Add `workflow` as a new bot type with a `flow` field (path to `.flow` file) |
+| `src/mattermost.ts` | Detect `workflow` bot type on message receive; invoke FlowSpec runtime with user message as `question` input; post final synthesis back to originating channel |
+| `src/slack.ts` | Same as mattermost.ts (can defer to later) |
+| `bots.yaml` | Add `council` bot of `type: workflow` pointing to `flows/dual-council.flow` |
+| `config/channel-registry.yaml` | Map `council` bot to its Mattermost channel (via `/f provision council`) |
+| `flows/dual-council.flow` | Minor tweak for result routing back to originating channel |
+
+**Key challenge:** Result routing — FlowSpec normally posts to designated output channels. For a Workflow Channel, the final synthesis must come back to the channel the user messaged. Solution: pass `source_channel` as a special variable the flow references, or have the handler capture the workflow's final output and post it back directly.
+
+See Dev Idea #26 in `docs/memory/dev-ideas.md`.
 
 ### Handy — Speech-to-Text for Driving Claude Code / Foreman
 Open source Mac tool for local, offline speech-to-text (no cloud, no API cost). Uses Parakeet V3 by default, also supports Whisper small/large. Hold a hotkey to record, release to transcribe — text appears at cursor in any app including Claude Code terminal and Mattermost. Chintan Patel (MFP) uses it ~100x/day with F19 hotkey. Find it on GitHub by searching "Handy speech to text". Good candidate for driving Foreman workflows hands-free.

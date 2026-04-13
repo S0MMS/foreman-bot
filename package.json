@@ -28,6 +28,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build",
+    "setup": "docker compose up -d && sleep 5 && zsh scripts/bootstrap.sh",
     "ui": "npm run dev --prefix ui",
     "ui:install": "npm install --prefix ui"
   },

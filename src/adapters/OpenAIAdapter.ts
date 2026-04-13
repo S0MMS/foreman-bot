@@ -558,13 +558,27 @@ export class OpenAIAdapter implements AgentAdapter {
     return new OpenAI({ apiKey });
   }
 
+  private hasApiKey(): boolean {
+    const config = readConfig();
+    return !!(config.openaiApiKey || process.env.OPENAI_API_KEY);
+  }
+
+  private noKeyResponse(): QueryResult {
+    return {
+      result: "**OpenAI API key not configured.**\n\nTo enable this channel, set your API key:\n```\nexport OPENAI_API_KEY=your-key-here\nnpm run setup\n```\nOr add `\"openaiApiKey\": \"your-key\"` to `~/.foreman/config.json`.",
+      sessionId: "", cost: 0, turns: 0, tokensIn: 0, tokensOut: 0,
+    };
+  }
+
   async start(options: AgentOptions & { cwd: string; name: string }): Promise<QueryResult> {
+    if (!this.hasApiKey()) return this.noKeyResponse();
     this.histories.set(options.channelId, []);
     saveHistoriesToDisk(this.histories);
     return this.chat(options);
   }
 
   async resume(options: AgentOptions & { sessionId: string; cwd: string; name: string }): Promise<QueryResult> {
+    if (!this.hasApiKey()) return this.noKeyResponse();
     return this.chat(options);
   }
 
