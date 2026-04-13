@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — adapter-switch fix + resilient postMessage + gemini-verifier bot
+## Current Health: ✅ STABLE — bot provider/model auto-init from bots.yaml
 
-**Last known good commit:** `5accf9f`
-**Rollback:** `git checkout 5accf9f -- src/mattermost.ts src/slack.ts bots.yaml && npm run build`
+**Last known good commit:** `afb1467`
+**Rollback:** `git checkout afb1467 -- src/mattermost.ts && npm run build`
 
 ---
 
