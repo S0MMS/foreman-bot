@@ -44,11 +44,14 @@ Three Postgres tables capture everything:
 | `bot_name` | string | Which bot handled this step |
 | `input_prompt` | text | What was sent to the bot |
 | `output_response` | text | What the bot returned |
-| `tokens_in` | int | Input token count |
-| `tokens_out` | int | Output token count |
-| `cost_usd` | decimal | Cost for this step |
-| `duration_ms` | int | How long it took |
+| `turns` | int | Number of turns to complete (`Done in N turns`) |
+| `tokens_in` | int | Input token count (`3 in`) |
+| `tokens_out` | int | Output token count (`113 out`) |
+| `cost_usd` | decimal | Cost for this step (`$0.3939`) |
+| `duration_ms` | int | How long it took (`10s`) |
 | `status` | string | `completed`, `failed`, `retried` |
+
+> **Stats footer connection:** Every column above maps directly to the stats footer already displayed in the Foreman UI and Slack: `Done in 4 turns | $0.3939 | 3 in / 113 out | 10s`. Foreman already calculates all of this per response — persisting it to Postgres is just a matter of writing the row at the same time the footer is rendered. Over time this enables: cost per bot, cost per workflow type, token efficiency trends, average response time per bot, and total spend over any time range.
 
 ### `bot_messages`
 | Column | Type | Description |

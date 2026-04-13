@@ -1,5 +1,18 @@
 # Development Ideas
 
+## 26. Workflow Channel — Conversational Multi-Model Council
+- **Status**: Idea
+- **Concept**: A new type of Foreman channel where every message you type automatically triggers a named FlowSpec workflow behind the scenes, and the final synthesized output is posted back conversationally — as if you were talking to a single bot. From the user's perspective, it feels identical to chatting with the Slack or Mattermost Architect. The multi-model orchestration is completely invisible.
+- **Primary use case**: The Dual Council — Sonnet and Opus answer every question in parallel, a third Sonnet bot synthesizes both answers into a unified response. User asks a question, gets a synthesis. No `/f run` needed, no workflow awareness required.
+- **Why it's different from existing channels**: Today a channel maps 1:1 to a single bot/model. A Workflow Channel maps to a FlowSpec workflow — potentially many bots, many models, running in parallel, with synthesis. The channel is the interface; the workflow is the engine.
+- **Why it's different from running `/f run` manually**: Manual workflow runs are explicit and one-off. A Workflow Channel is always-on — every message triggers the workflow automatically. It's ambient intelligence, not a command.
+- **The new Foreman primitive**: `type: workflow` in `bots.yaml` — instead of `provider` + `model`, you specify a `flow` file path. When a message arrives in that channel, Foreman runs the flow with the message as input and posts the final output back.
+- **Dual Council as first instance**: `council-sonnet`, `council-opus`, `council-synth` bots + `flows/dual-council.flow` already created. The Workflow Channel concept would wire them together as a conversational interface.
+- **When you'd reach for it**: High-stakes decisions, architecture tradeoffs, business cases, anything where you want multiple model perspectives without knowing in advance which model would give the best answer. Complements (not replaces) the Slack Architect (single Sonnet) and Mattermost Architect (single Opus).
+- **Implementation**: New `type: workflow` in `bots.yaml`, handled in `mattermost.ts`/`slack.ts` — on message receive, run the named flow with `{message}` as input, post final output back to channel.
+
+---
+
 ## 25. Postgres + pgvector as Semantic Context Store
 - **Status**: Idea
 - **Concept**: Use Postgres (already in the Docker stack) as a durable context store for FlowSpec workflows, with the `pgvector` extension enabling semantic/similarity search — not just exact key lookups.

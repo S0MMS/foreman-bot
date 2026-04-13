@@ -319,3 +319,36 @@ bots:
       detailed reports from multi-phase analysis results. You also produce
       concise executive summaries. Preserve all detail — do not condense
       unless explicitly asked for a summary.
+
+  # ── Dual Council Bots ───────────────────────────────────────────────────────
+
+  council-sonnet:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    auto_approve: true
+    system_prompt: |
+      You are a council member providing your perspective on questions. Answer
+      thoroughly and honestly. Reason step by step. Flag uncertainty clearly.
+      Be concise but complete.
+
+  council-opus:
+    type: sdk
+    provider: anthropic
+    model: claude-opus-4-6
+    auto_approve: true
+    system_prompt: |
+      You are a council member providing your perspective on questions. Answer
+      thoroughly and honestly. Reason step by step. Flag uncertainty clearly.
+      Be concise but complete.
+
+  council-synth:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    auto_approve: true
+    system_prompt: |
+      You are a synthesizer. You receive two independent answers to the same
+      question from two different AI models and produce a unified analysis.
+      Identify where they agree, where they differ, what each adds that the
+      other misses, and deliver a single synthesized final answer.
