@@ -35,7 +35,7 @@ import {
 import { MODEL_ALIASES, generateCuteName, SUPPORTED_IMAGE_TYPES } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { readConfig } from "./config.js";
-import { createCanvasMcpServer } from "./mcp-canvas.js";
+import { createCanvasMcpServer } from "./mcp-toolbelt.js";
 import { getBotTransport, getBotRegistry, reloadBotRegistry } from "./bots.js";
 import { callBotByName } from "./kafka.js";
 import { loadRawRegistry } from "./flowspec/registry.js";
@@ -65,7 +65,7 @@ const botUserIds = new Set<string>();
 
 // Bot routing: channelId → bot config (name, system prompt, token)
 // Built from channel-registry.yaml at startup — one foreman bot serves all channels.
-interface BotConfig { name: string; displayName: string; systemPrompt: string; token: string; userId: string; }
+interface BotConfig { name: string; displayName: string; systemPrompt: string; token: string; userId: string; mcpServers?: string[]; }
 const channelBotMap = new Map<string, BotConfig>();
 
 function identifyChannelBot(channelId: string): BotConfig | null {
@@ -88,6 +88,7 @@ function buildChannelBotMap(): void {
       systemPrompt: botEntry.definition.system_prompt,
       token: MM_FOREMAN_TOKEN,  // single foreman bot token for all channels
       userId: MM_FOREMAN_USER_ID || MM_ARCHITECT_USER_ID || "",  // foreman bot's user ID for reactions
+      mcpServers: botEntry.definition.type === 'sdk' ? botEntry.definition.mcp_servers : undefined,
     });
     // Initialize channel session with the bot's provider, model, and auto-approve from bots.yaml
     if (botEntry.definition.type === 'sdk') {
@@ -337,7 +338,7 @@ async function processChannelMessage(
   };
 
   // Create MCP server — pass null for Slack app (not used in MM bridge)
-  const mcpServer = createCanvasMcpServer(channel, null as any, isDM, "mattermost");
+  const mcpServer = createCanvasMcpServer(channel, null as any, isDM, "mattermost", botConfig?.mcpServers);
 
   const systemPromptOverride = botConfig?.systemPrompt;
   const sessionStartMs = Date.now();

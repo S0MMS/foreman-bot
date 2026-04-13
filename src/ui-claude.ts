@@ -15,7 +15,7 @@ import { dirname, join } from 'path';
 import type { App } from '@slack/bolt';
 import { getState, setSessionId } from './session.js';
 import { MODEL_ALIASES, DEFAULT_MODEL } from './types.js';
-import { createCanvasMcpServer } from './mcp-canvas.js';
+import { createCanvasMcpServer } from './mcp-toolbelt.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');

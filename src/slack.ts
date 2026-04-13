@@ -59,7 +59,7 @@ import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { markdownToSlack, chunkMessage, formatToolRequest } from "./format.js";
 import { readConfig } from "./config.js";
 import { fetchChannelCanvas, appendCanvasContent, listChannelCanvases } from "./canvas.js";
-import { createCanvasMcpServer } from "./mcp-canvas.js";
+import { createCanvasMcpServer } from "./mcp-toolbelt.js";
 
 
 /**

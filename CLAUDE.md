@@ -49,7 +49,7 @@ src/
   init.ts             — Interactive setup wizard (foreman init)
   canvas.ts           — Canvas fetch/append helpers (Slack Files API)
   canvases.ts         — Canvas persistence to ~/.foreman/canvases.json
-  mcp-canvas.ts       — MCP server ("foreman-toolbelt") exposing all tools to agents
+  mcp-toolbelt.ts       — MCP server ("foreman-toolbelt") exposing all tools to agents
   kafka.ts            — KafkaJS client, topic management, bot consumers, callBot()
   bots.ts             — bots.yaml parser, bot registry, roster tree, status SSE
   bot-status.ts       — Bot status tracking (online/offline/busy)
@@ -200,7 +200,7 @@ Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull ma
 
 ## MCP Canvas Server
 
-`mcp-canvas.ts` creates a per-channel MCP server (`createCanvasMcpServer`) injected into every Claude session. It exposes these tools:
+`mcp-toolbelt.ts` creates a per-channel MCP server (`createCanvasMcpServer`) injected into every Claude session. It exposes these tools:
 
 | Tool | Description |
 |------|-------------|

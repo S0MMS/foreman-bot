@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — auto_approve from bots.yaml, provider/model auto-init
+## Current Health: ✅ STABLE — toolbelt modularization complete
 
-**Last known good commit:** `6a561f6`
-**Rollback:** `git checkout 6a561f6 -- src/bots.ts src/mattermost.ts bots.yaml && npm run build`
+**Last known good state:** post-modularization (new domain files, not yet committed)
+**Rollback (if needed):** `git checkout 2c6cf44 -- src/mcp-canvas.ts src/bots.ts src/mattermost.ts && rm -f src/mcp-slack.ts src/mcp-atlassian.ts src/mcp-github.ts src/mcp-bitrise.ts src/mcp-admin.ts src/mcp-xcode.ts && npm run build`
 
 ---
 
@@ -244,6 +244,80 @@ Install Tailscale on Mac + phone to connect the Mattermost app from anywhere. LA
 
 ### Token Usage in Stats Footer
 Add input/output token counts to the `Done in N turns | $X.XXXX | Xs` footer. Claude Agent SDK already returns token usage in response metadata. Proposed format: `Done in 4 turns | $0.0234 | 1,204 in / 1,643 out | 12s`
+
+### Toolbelt Modularization — Split foreman-toolbelt into Domain MCP Servers
+The `foreman-toolbelt` MCP server is becoming monolithic — ~80 tools across Canvas, Jira, Confluence, GitHub, Google Workspace, diagrams, and system tools, all loaded into every session regardless of what the bot actually needs. This burns tokens on irrelevant tool descriptions, creates maintenance complexity, and makes scoping impossible.
+
+**Goal:** Split into domain-scoped MCP servers, then let `bots.yaml` declare which servers each bot gets.
+
+**Naming principle:** All Foreman-internal MCP servers must be prefixed `foreman-` to clearly distinguish them from official external MCPs (e.g. `claude.ai Atlassian`, `claude.ai Slack`). Developers have already expressed confusion between Foreman's Jira tools and the official Atlassian MCP — the prefix makes it unambiguous:
+- `mcp__foreman-atlassian__JiraSearch` ← Foreman internal
+- `mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql` ← Official Atlassian MCP
+
+**Final agreed structure:**
+
+| MCP Server | Source file | Tools | Notes |
+|---|---|---|---|
+| `foreman-slack` | `mcp-slack.ts` | 9 Canvas tools, PostMessage, ReadChannel, GetCurrentChannel, DiagramCreate | Slack-platform only. Canvas is Slack-native; DiagramCreate uses Slack file upload API. |
+| `foreman-admin` | `mcp-admin.ts` | SelfReboot | Architect only — no other bot should be able to reboot Foreman. |
+| `foreman-atlassian` | `mcp-atlassian.ts` | 13 Jira tools + 4 Confluence tools | |
+| `foreman-github` | `mcp-github.ts` | GitHubCreatePR, ListPRs, ReadIssue, ReadPR, Search | |
+| `foreman-bitrise` | `mcp-bitrise.ts` | TriggerBitrise | CI/CD is its own domain |
+| `foreman-xcode` | `mcp-xcode.ts` | LaunchApp | iOS simulator / Xcode tools |
+| `foreman-google` | `mcp-google.ts` | Drive, Docs, Slides, Sheets, Gmail, Calendar | Future — wrappers around workspace-mcp |
+| `foreman-compute` | `mcp-compute.ts` | RunBash, ReadFile, WriteFile, EditFile | Non-Claude models only. Currently hardcoded in `OpenAIAdapter.ts` — extract into proper MCP so any non-Claude bot can declare it in `bots.yaml` instead of relying on adapter logic. |
+
+**`bots.yaml` scoping:**
+```yaml
+architect:
+  mcp_servers: [foreman-slack, foreman-admin, foreman-atlassian, foreman-github, foreman-google, foreman-bitrise]
+
+council-sonnet:
+  mcp_servers: [foreman-slack]
+
+techops-bot:
+  mcp_servers: [foreman-slack, foreman-atlassian, foreman-github]
+
+gemini-researcher:
+  model: gemini:gemini-2.5-flash
+  mcp_servers: [foreman-slack, foreman-compute]  # non-Claude: gets compute tools declaratively
+```
+
+**Default:** `[foreman-slack]` if `mcp_servers` not specified.
+
+**Why this matters:** Each tool description costs tokens. A council bot doesn't need 13 Jira tools or Bitrise tools. Non-Claude models get compute capabilities declaratively via `bots.yaml` instead of hardcoded adapter logic. New integrations (Google, Linear, Notion) plug in as new files without touching existing bots.
+
+**Credential management:** Almost every toolbelt requires credentials (Jira API token, GitHub PAT, Bitrise key, Google OAuth, etc.). Credentials stay in `~/.foreman/config.json` per developer — never in the repo. Toolbelts that lack credentials simply don't load (graceful degradation with a startup warning). Credential setup is intentionally **separate from bootstrap** — triggered via `/f setup` so new developers aren't overwhelmed at first boot.
+
+**Implementation steps (requires Dead Man Protocol + reboot):**
+1. Split `src/mcp-canvas.ts` into 7 focused files
+2. Extract `RunBash/ReadFile/WriteFile/EditFile` out of `OpenAIAdapter.ts` into `mcp-compute.ts`
+3. Add `mcp_servers` field to bot definitions in `bots.yaml`
+4. Update `buildMcpServers()` in `AnthropicAdapter.ts` to read `mcp_servers` from bot config
+5. Build + Dead Man Protocol + reboot
+
+### `/f setup` — Toolbelt Credential Configuration
+A separate, re-runnable command for configuring toolbelt credentials. Intentionally decoupled from the bootstrap/startup experience so new developers aren't overwhelmed on first boot.
+
+**Usage:**
+- `/f setup` — lists all toolbelts, shows which are configured vs. missing credentials
+- `/f setup atlassian` — walks through Jira/Confluence credential prompts
+- `/f setup github` — prompts for GitHub personal access token
+- `/f setup google` — prompts for Google OAuth client ID + secret
+- `/f setup bitrise` — prompts for Bitrise API key + app slug
+
+**Behavior:** Writes to `~/.foreman/config.json`. Toolbelts with missing credentials are omitted gracefully at startup with a warning. Re-runnable when tokens expire or rotate. Works on both Slack and Mattermost.
+
+### Google Workspace MCP Integration
+Add the [Google Workspace MCP server](https://workspacemcp.com/) to Claude Code's `~/.claude/settings.json`. Once configured, Foreman (me) can read and write Google Drive, Docs, **Slides**, Sheets, Gmail, and Calendar directly from any Slack or Mattermost channel. SDK bots do NOT get this automatically — they'd need a `foreman-toolbelt` wrapper (e.g. `CreateGoogleSlides`, `UpdateGoogleDoc` tools) to expose it fleet-wide.
+
+**Immediate use case:** Build the Foreman architecture presentation for Brian Lococo and the Infra Team directly from Slack/Mattermost — generate slides, add diagrams, share with coworkers via their work email addresses.
+
+**Setup steps:**
+1. Install `workspacemcp.com` (one-click install or npm)
+2. Set up OAuth credentials via Google Cloud Console
+3. Add to `~/.claude/settings.json` under `mcpServers`
+4. (Optional) Wrap key tools in `foreman-toolbelt` so SDK bots can use them too
 
 ### Postgres + pgvector as Semantic Context Store
 Use Postgres (already in Docker stack) with the `pgvector` extension as a durable, semantically-queryable context store for FlowSpec workflows. Store bot outputs in `TEXT`/`JSONB` columns. pgvector adds vector similarity search — convert text to embeddings and find the N most semantically similar past workflow outputs without knowing exact IDs, dates, or workflow names. Example: a bot about to write a tech spec queries for "the 5 most relevant past workflow outputs to: writing a tech spec for an iOS feature" and gets prior specs automatically. This is the same tech behind RAG/semantic search. Key advantage over Deep Agents (which uses plain filesystem I/O): workflow memory gets smarter over time, with past runs informing future runs automatically. pgvector is just a Postgres extension — same Docker container, no new infrastructure. See Dev Idea #25 in `docs/memory/dev-ideas.md`.
