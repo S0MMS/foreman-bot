@@ -1,5 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { homedir } from "os";
 import { AUTO_APPROVE_TOOLS } from "../types.js";
+import { readConfig } from "../config.js";
 import {
   getState,
   setSessionId,
@@ -103,6 +105,20 @@ function buildMcpServers(
       type: "claudeai-proxy",
       url: "https://mcp.slack.com/mcp",
       id: "slack",
+    };
+  }
+
+  // Include Google Workspace MCP if credentials are configured.
+  const config = readConfig();
+  if (config.googleOAuthClientId && config.googleOAuthClientSecret) {
+    servers["google-workspace"] = {
+      type: "stdio",
+      command: `${homedir()}/.local/bin/uvx`,
+      args: ["workspace-mcp", "--single-user"],
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: config.googleOAuthClientId,
+        GOOGLE_OAUTH_CLIENT_SECRET: config.googleOAuthClientSecret,
+      },
     };
   }
 

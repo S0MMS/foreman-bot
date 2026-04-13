@@ -29,6 +29,8 @@ export interface ForemanConfig {
   mattermostTeamId?: string;    // Mattermost team ID
   mattermostBotTokens?: Record<string, string>; // bot name → bot access token
   mattermostActionUrl?: string;  // Callback URL for interactive button actions. Default: http://host.docker.internal:3001 (Mattermost runs in Docker and must reach the host)
+  googleOAuthClientId?: string;     // Google OAuth client ID for workspace-mcp
+  googleOAuthClientSecret?: string; // Google OAuth client secret for workspace-mcp
 }
 
 export function readConfig(): ForemanConfig {
