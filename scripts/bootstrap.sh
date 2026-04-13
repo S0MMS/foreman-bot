@@ -226,16 +226,33 @@ log "Creating channels..."
 
 # Declare channels: name|display_name|purpose
 CHANNELS=(
+  # FLOWSPEC TUTORIAL
+  "flowspec-engineer|flowspec-engineer|FlowSpec specialist — helps write .flow files"
+  "flowbot-01|flowbot-01|FlowSpec tutorial bot 1"
+  "flowbot-02|flowbot-02|FlowSpec tutorial bot 2"
+  "flowbot-03|flowbot-03|FlowSpec tutorial bot 3"
+  # TECHOPS-2187
+  "claude-worker|claude-worker|TECHOPS-2187 Claude worker"
+  "gemini-worker|gemini-worker|TECHOPS-2187 Gemini worker"
+  "gpt-worker|gpt-worker|TECHOPS-2187 GPT worker"
+  "claude-judge|claude-judge|TECHOPS-2187 synthesis judge"
+  "techops-2187|techops-2187|TECHOPS-2187 report/coordination channel"
+  # PYTHIA
+  "pythia-claude-worker|pythia-claude-worker|Pythia Claude research worker"
+  "pythia-gemini-worker|pythia-gemini-worker|Pythia Gemini research worker"
+  "pythia-gpt-worker|pythia-gpt-worker|Pythia GPT research worker"
+  "pythia-claude-judge|pythia-claude-judge|Pythia synthesis judge"
+  "pythia-gemini-verifier|pythia-gemini-verifier|Pythia independent verifier"
+  "pythia-collator|pythia-collator|Pythia research briefing collator"
+  # MODELS
+  "claude|claude|Anthropic Claude Opus — raw model access"
+  "gemini|gemini|Google Gemini — raw model access"
+  "gpt|gpt|OpenAI GPT — raw model access"
+  # GENERAL
   "thought-pad|thought-pad|Brainstorming and rubber duck debugging"
   "alice|alice|General-purpose Claude assistant"
   "bob|bob|Pragmatic problem-solver"
   "charlie|charlie|Creative thinker and communicator"
-  "flowspec-engineer|flowspec-engineer|Help writing and debugging .flow files"
-  "gemini|gemini|Google Gemini assistant"
-  "openai|openai|OpenAI GPT assistant"
-  "flowbot-01|flowbot-01|FlowSpec tutorial bot 1"
-  "flowbot-02|flowbot-02|FlowSpec tutorial bot 2"
-  "flowbot-03|flowbot-03|FlowSpec tutorial bot 3"
 )
 
 # Track channel IDs for registry
@@ -272,7 +289,7 @@ if slack:
 " 2>/dev/null || echo "")
 
   # Extract mattermost entries NOT in our bootstrap list
-  BOOTSTRAP_NAMES="thought-pad alice bob charlie flowspec-engineer gemini openai flowbot-01 flowbot-02 flowbot-03"
+  BOOTSTRAP_NAMES="flowspec-engineer flowbot-01 flowbot-02 flowbot-03 claude-worker gemini-worker gpt-worker claude-judge techops-2187 pythia-claude-worker pythia-gemini-worker pythia-gpt-worker pythia-claude-judge pythia-gemini-verifier pythia-collator claude gemini gpt thought-pad alice bob charlie"
   EXISTING_MM_EXTRA=$(python3 -c "
 import yaml
 with open('$REGISTRY_FILE') as f:
@@ -373,26 +390,61 @@ create_category() {
   done
   ids_json+="]"
 
-  mm_api POST "/users/$ADMIN_USER_ID/teams/$TEAM_ID/channels/categories" \
-    "{\"user_id\":\"$ADMIN_USER_ID\",\"team_id\":\"$TEAM_ID\",\"display_name\":\"$display_name\",\"type\":\"custom\",\"channel_ids\":$ids_json}" > /dev/null 2>&1 || true
-  log "  Category: $display_name"
+  # Check if category already exists
+  local existing_id
+  existing_id=$(mm_api GET "/users/$ADMIN_USER_ID/teams/$TEAM_ID/channels/categories" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+cats = data.get('categories', data) if isinstance(data, dict) else data
+for c in cats:
+    if c.get('display_name') == '$display_name' and c.get('type') == 'custom':
+        print(c['id'])
+        break
+" 2>/dev/null || echo "")
+
+  if [ -n "$existing_id" ]; then
+    # Update existing category with current channel list
+    mm_api PUT "/users/$ADMIN_USER_ID/teams/$TEAM_ID/channels/categories/$existing_id" \
+      "{\"id\":\"$existing_id\",\"user_id\":\"$ADMIN_USER_ID\",\"team_id\":\"$TEAM_ID\",\"display_name\":\"$display_name\",\"type\":\"custom\",\"channel_ids\":$ids_json}" > /dev/null 2>&1 || true
+    log "  Category: $display_name (updated)"
+  else
+    mm_api POST "/users/$ADMIN_USER_ID/teams/$TEAM_ID/channels/categories" \
+      "{\"user_id\":\"$ADMIN_USER_ID\",\"team_id\":\"$TEAM_ID\",\"display_name\":\"$display_name\",\"type\":\"custom\",\"channel_ids\":$ids_json}" > /dev/null 2>&1 || true
+    log "  Category: $display_name (created)"
+  fi
 }
+
+create_category "FlowSpec Tutorial" \
+  "${CHANNEL_IDS[flowspec-engineer]}" \
+  "${CHANNEL_IDS[flowbot-01]}" \
+  "${CHANNEL_IDS[flowbot-02]}" \
+  "${CHANNEL_IDS[flowbot-03]}"
+
+create_category "TECHOPS-2187" \
+  "${CHANNEL_IDS[claude-worker]}" \
+  "${CHANNEL_IDS[gemini-worker]}" \
+  "${CHANNEL_IDS[gpt-worker]}" \
+  "${CHANNEL_IDS[claude-judge]}" \
+  "${CHANNEL_IDS[techops-2187]}"
+
+create_category "Pythia" \
+  "${CHANNEL_IDS[pythia-claude-worker]}" \
+  "${CHANNEL_IDS[pythia-gemini-worker]}" \
+  "${CHANNEL_IDS[pythia-gpt-worker]}" \
+  "${CHANNEL_IDS[pythia-claude-judge]}" \
+  "${CHANNEL_IDS[pythia-gemini-verifier]}" \
+  "${CHANNEL_IDS[pythia-collator]}"
+
+create_category "Models" \
+  "${CHANNEL_IDS[claude]}" \
+  "${CHANNEL_IDS[gemini]}" \
+  "${CHANNEL_IDS[gpt]}"
 
 create_category "General" \
   "${CHANNEL_IDS[thought-pad]}" \
   "${CHANNEL_IDS[alice]}" \
   "${CHANNEL_IDS[bob]}" \
   "${CHANNEL_IDS[charlie]}"
-
-create_category "Specialists" \
-  "${CHANNEL_IDS[flowspec-engineer]}" \
-  "${CHANNEL_IDS[gemini]}" \
-  "${CHANNEL_IDS[openai]}"
-
-create_category "FlowSpec Tutorial" \
-  "${CHANNEL_IDS[flowbot-01]}" \
-  "${CHANNEL_IDS[flowbot-02]}" \
-  "${CHANNEL_IDS[flowbot-03]}"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
@@ -412,6 +464,7 @@ echo "    1. Build Foreman:  npm run build"
 echo "    2. Start Foreman:  node dist/index.js"
 echo "    3. Open Mattermost: $MM_URL"
 echo "    4. DM the 'foreman' bot for the Architect"
-echo "    5. Try a channel: message #alice or #thought-pad"
-echo "    6. Run the tutorial: /f run flows/flowspec-tutorial.flow"
+echo "    5. Try a model: message #claude, #gemini, or #gpt"
+echo "    6. Try general chat: message #alice or #thought-pad"
+echo "    7. Run the tutorial: /f run flows/flowspec-tutorial.flow"
 echo ""

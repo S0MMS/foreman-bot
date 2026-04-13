@@ -1,5 +1,38 @@
 # Development Ideas
 
+## 25. Postgres + pgvector as Semantic Context Store
+- **Status**: Idea
+- **Concept**: Use Postgres (already in the Docker stack) as a durable context store for FlowSpec workflows, with the `pgvector` extension enabling semantic/similarity search — not just exact key lookups.
+- **Why Postgres over Redis or Kafka**:
+  - Kafka is a sequential log — wrong data structure for random access context retrieval; also has a ~1MB message size limit
+  - Redis is fast but volatile (in-memory, not durable across restarts without extra config)
+  - Postgres is already running in Docker, durable, queryable, and serves double duty as the BI layer
+  - LLM inference takes 2-10 seconds per step — a Postgres query takes 5-50ms. The speed difference is imperceptible.
+- **How to store arbitrary context in Postgres**:
+  - `TEXT` column — store any prompt or response as a plain string, no schema needed for the content
+  - `JSONB` column — store structured/nested context (tool calls, metadata) and query into it via Postgres JSON operators
+- **What pgvector adds**: Convert text → embedding vector (a list of numbers representing semantic meaning). Store the vector in a `pgvector` column. At query time, embed the query and find the N most semantically similar past outputs — without knowing their exact IDs, dates, or workflow names. This is the same technology behind RAG (Retrieval Augmented Generation) and semantic search.
+- **Example**: A bot about to write a tech spec queries pgvector for "the 5 most semantically similar past workflow outputs to: writing a tech spec for an iOS feature" — it gets relevant prior specs automatically, without anyone curating them.
+- **Key insight**: Deep Agents uses plain filesystem I/O for context offloading (blunt, not queryable). Postgres + pgvector gives you the same offloading PLUS semantic retrieval — the workflow memory gets smarter over time, where past runs inform future runs automatically.
+- **pgvector is a Postgres extension** — runs in the same existing Docker container, no new infrastructure needed.
+- **Relates to**: Dev Idea #24 (virtual context store), BI layer (`docs/foreman/foreman-bi-layer.md`), Pythia V prompt truncation fix
+
+---
+
+## 24. Virtual Context Store for FlowSpec (inspired by LangChain Deep Agents)
+- **Status**: Idea
+- **Concept**: FlowSpec multi-phase workflows (like Pythia V) suffer from context bloat — Phase 2 prompts that include full Phase 1 worker outputs can exceed Mattermost's 16K limit and waste LLM tokens. LangChain's "Deep Agents" library (released April 2025) solves this with a **virtual filesystem**: when tool results exceed 20K tokens, content is offloaded to a backend store while the agent context keeps only references + previews. At 85% context capacity, an automatic summarization pass compresses the session.
+- **Foreman adaptation**: Instead of passing raw worker answers in downstream prompts, FlowSpec would:
+  1. Store each worker's output in a **shared context store** — simplest v1 is **local files** (e.g. `/tmp/flowspec/run-{id}/worker-1.md`). Claude SDK bots already have Read/Write/Glob/Grep tools, so they can read files natively. Future versions could use Kafka topics, Redis, or Mattermost canvas.
+  2. Pass downstream phases a **reference + summary** (e.g. "Worker 1 answered 4,200 tokens — summary: [key points]. Full output at `/tmp/flowspec/run-123/worker-1.md`")
+  3. SDK bots (Anthropic) use their built-in Read tool to fetch full content on demand. Non-SDK bots (OpenAI, Gemini) get content injected by FlowSpec at dispatch time, but FlowSpec controls how much to inject.
+- **Why files work as v1**: No new infrastructure needed. Claude Agent SDK bots already have filesystem tools. Files are easy to debug/inspect. FlowSpec just writes outputs to a known directory instead of interpolating them into the prompt. Non-SDK bots are handled by FlowSpec reading the files and injecting content.
+- **Benefits**: Eliminates the prompt truncation problem, enables arbitrarily long multi-phase workflows, reduces token costs by not repeating full outputs in every prompt
+- **Relates to**: BI layer (context store events could feed into the same Postgres pipeline), Pythia V prompt truncation fix (this is the proper long-term solution vs. the current 2K truncation hack)
+- **Reference**: https://pub.towardsai.net/langchain-just-released-deep-agents-and-it-changes-how-you-build-ai-systems-cc2371b04714
+
+---
+
 ## 23. Clean Up Personal Memory Directory
 - **Status**: Pending
 - **Concept**: All Foreman and project-specific memory files were supposed to be moved out of `~/.claude/projects/-Users-chris-shreve/memory/` into the Foreman repo at `claude-slack-bridge/docs/memory/`. The move happened but the originals were never deleted. 14 files + MEMORY.md still reference Foreman system docs, MFP project docs, and feature roadmap items that don't belong in the personal memory directory. Need to delete all Foreman/MFP files from the personal directory and reset MEMORY.md to be empty or only contain entries scoped to the home directory context.

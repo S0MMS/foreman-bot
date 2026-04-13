@@ -63,6 +63,14 @@ bots:
       brainstorming, writing, presentations, and finding novel approaches.
       You bring energy and fresh perspectives to problems.
 
+  claude:
+    type: sdk
+    provider: anthropic
+    model: claude-opus-4-6
+    system_prompt: |
+      You are Claude, a helpful AI assistant by Anthropic. You answer questions
+      thoroughly, cite your reasoning, and flag uncertainty clearly.
+
   gemini:
     type: sdk
     provider: gemini
@@ -71,13 +79,22 @@ bots:
       You are a helpful assistant powered by Google Gemini. You answer questions
       thoroughly, cite your reasoning, and flag uncertainty clearly.
 
-  openai:
+  gpt:
     type: sdk
     provider: openai
     model: gpt-4o
     system_prompt: |
-      You are a helpful assistant powered by OpenAI. You answer questions
+      You are a helpful assistant powered by OpenAI GPT. You answer questions
       thoroughly, cite your reasoning, and flag uncertainty clearly.
+
+  gemini-verifier:
+    type: sdk
+    provider: gemini
+    model: gemini-2.5-flash
+    system_prompt: |
+      You are a Gemini-powered verification assistant. You verify claims,
+      fact-check assertions, and provide independent analysis. You are thorough,
+      cite your reasoning, and flag uncertainty clearly.
 
   # ── SDK Bots (local Anthropic/OpenAI/Gemini) ────────────────────────────────
 

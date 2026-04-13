@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — token usage in footer, Datadog rolled back, Pythia V truncation live
+## Current Health: ✅ STABLE — adapter-switch fix + resilient postMessage + gemini-verifier bot
 
-**Last known good commit:** `0c3bb4e`
-**Rollback:** `git checkout 0c3bb4e -- src/adapters/AgentAdapter.ts src/adapters/AnthropicAdapter.ts src/adapters/GeminiAdapter.ts src/adapters/OpenAIAdapter.ts src/claude.ts src/mattermost.ts src/slack.ts && npm run build`
+**Last known good commit:** `5accf9f`
+**Rollback:** `git checkout 5accf9f -- src/mattermost.ts src/slack.ts bots.yaml && npm run build`
 
 ---
 
@@ -222,6 +222,9 @@ Install Tailscale on Mac + phone to connect the Mattermost app from anywhere. LA
 
 ### Token Usage in Stats Footer
 Add input/output token counts to the `Done in N turns | $X.XXXX | Xs` footer. Claude Agent SDK already returns token usage in response metadata. Proposed format: `Done in 4 turns | $0.0234 | 1,204 in / 1,643 out | 12s`
+
+### Postgres + pgvector as Semantic Context Store
+Use Postgres (already in Docker stack) with the `pgvector` extension as a durable, semantically-queryable context store for FlowSpec workflows. Store bot outputs in `TEXT`/`JSONB` columns. pgvector adds vector similarity search — convert text to embeddings and find the N most semantically similar past workflow outputs without knowing exact IDs, dates, or workflow names. Example: a bot about to write a tech spec queries for "the 5 most relevant past workflow outputs to: writing a tech spec for an iOS feature" and gets prior specs automatically. This is the same tech behind RAG/semantic search. Key advantage over Deep Agents (which uses plain filesystem I/O): workflow memory gets smarter over time, with past runs informing future runs automatically. pgvector is just a Postgres extension — same Docker container, no new infrastructure. See Dev Idea #25 in `docs/memory/dev-ideas.md`.
 
 ### Foreman Command Center (BI Layer Approach)
 Instead of building a custom dashboard UI, pipe Temporal + Kafka data into Postgres tables (`workflows`, `workflow_steps`, `bot_messages`) via a small sync job, then point a BI tool (Grafana, Metabase, or Datadog — already in MFP stack) at it. Gets fleet dashboard, workflow drill-down, cost analysis, and per-bot metrics with zero frontend code. Correlation ID joins Temporal events to Kafka messages. Only custom piece needed: a lightweight "Analyze with Architect" page that takes a workflow ID and hands full context to the Architect for AI-assisted root cause analysis and improvement suggestions.

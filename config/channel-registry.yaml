@@ -19,26 +19,28 @@ slack:
   gemini-verifier: C0AP53LT7T9
   techops-2187: C0APWN10PKN
 mattermost:
-  thought-pad: pct6u54cntrf7jwbefsk6ra8sw
-  alice: ak1wt1n9zfb93nqksthdmbggpc
-  bob: dkjko57j4ifefk1o4orjpcur4h
-  charlie: aoijzgbyribj5gfew3mcsygtha
   flowspec-engineer: obxixf4pzifg3e7g1jozs5wgya
-  gemini: i6sssh8yefrf9nd8m1bqozbcso
-  openai: 61b4c59u7brp8koppsd3w1cxmy
   flowbot-01: w3fkpfdzd38z5fkei3sdabnhyo
   flowbot-02: witk91ucbjgh58buud53s6w83o
   flowbot-03: n6gyjtp4y78njqtkwreabktjhh
   claude-worker: zema9ygw7pdspcmr33pd5mpz5o
-  techops-2187: h3h5ohp6r3r9mescewmkkxs1oo
   gemini-worker: pn47gtnjkfruxr3eqgzcz4yeqc
   gpt-worker: wzmi4n1yyt8wfya9c9aiiitsiy
   claude-judge: kzmg7j7fftdh5ksn4noxs9qnhw
-  gemini-verifier: ggmchrcxsiffuewit9h14p4nzy
-  collator: hsz4p4ne8igepb41ci396m414r
+  techops-2187: h3h5ohp6r3r9mescewmkkxs1oo
   pythia-claude-worker: niexwhc7ybbd7kho5f85ujeq3r
   pythia-gemini-worker: fh5gfkp19pgofmc8qgk4ckifga
   pythia-gpt-worker: xigoih38sjraujn6y9hmkbqfma
   pythia-claude-judge: ci4wkmibp7n99qkz33pw64ij5c
   pythia-gemini-verifier: dqm6g8pn3tbd3psfs5ca4xozjy
   pythia-collator: zk5m67d5sfyefrj9em3w5zjjrc
+  claude: 9nbzg1wo8bb6iqb1d6quri15ih
+  gemini: i6sssh8yefrf9nd8m1bqozbcso
+  gpt: 375pnzqokbnudqbjtxd59ump7o
+  thought-pad: pct6u54cntrf7jwbefsk6ra8sw
+  alice: ak1wt1n9zfb93nqksthdmbggpc
+  bob: dkjko57j4ifefk1o4orjpcur4h
+  charlie: aoijzgbyribj5gfew3mcsygtha
+  openai: 61b4c59u7brp8koppsd3w1cxmy
+  gemini-verifier: ggmchrcxsiffuewit9h14p4nzy
+  collator: hsz4p4ne8igepb41ci396m414r

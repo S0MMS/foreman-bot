@@ -110,7 +110,11 @@ async function mmFetch(method: string, endpoint: string, body?: unknown, token?:
 }
 
 export async function postMessage(channelId: string, text: string, botToken?: string): Promise<void> {
-  await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, botToken || MM_ARCHITECT_TOKEN);
+  try {
+    await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, botToken || MM_ARCHITECT_TOKEN);
+  } catch (err) {
+    console.error(`[mattermost] postMessage failed for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function postInteractiveMessage(
@@ -434,9 +438,12 @@ async function handleCommand(channel: string, text: string, userId: string, botT
       }
       const colonIdx = modelArg.indexOf(":");
       if (colonIdx !== -1) {
-        setAdapter(channel, modelArg.slice(0, colonIdx));
+        const oldAdapter = getState(channel).adapter ?? "anthropic";
+        const newAdapter = modelArg.slice(0, colonIdx);
+        setAdapter(channel, newAdapter);
         setModel(channel, modelArg.slice(colonIdx + 1));
-        await respond(`Switched to vendor \`${modelArg.slice(0, colonIdx)}\`, model \`${modelArg.slice(colonIdx + 1)}\``);
+        if (newAdapter !== oldAdapter) clearSession(channel);
+        await respond(`Switched to vendor \`${newAdapter}\`, model \`${modelArg.slice(colonIdx + 1)}\``);
       } else {
         const modelId = MODEL_ALIASES[modelArg] || modelArg;
         setModel(channel, modelId);

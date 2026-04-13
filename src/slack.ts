@@ -386,10 +386,12 @@ export function registerHandlers(app: App, botUserId: string, botId: string): vo
         let displayName: string;
         const colonIdx = modelArg.indexOf(":");
         if (colonIdx !== -1) {
+          const oldAdapter = getState(channel).adapter ?? "anthropic";
           const vendor = modelArg.slice(0, colonIdx);
           const model = modelArg.slice(colonIdx + 1);
           setAdapter(channel, vendor);
           setModel(channel, model);
+          if (vendor !== oldAdapter) clearSession(channel);
           displayName = `vendor \`${vendor}\`, model \`${model}\``;
         } else {
           const modelId = MODEL_ALIASES[modelArg] || modelArg;
