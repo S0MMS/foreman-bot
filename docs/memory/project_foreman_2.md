@@ -12,10 +12,12 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — bot provider/model auto-init from bots.yaml
+## Current Health: ⚠️ REBOOTING — auto_approve support in bots.yaml
 
-**Last known good commit:** `afb1467`
-**Rollback:** `git checkout afb1467 -- src/mattermost.ts && npm run build`
+**Change:** Added `auto_approve` field to SdkBot type. `buildChannelBotMap` applies it at startup. All 21 SDK bots set to `auto_approve: true`.
+**Files changed:** `src/bots.ts`, `src/mattermost.ts`, `bots.yaml`
+**Last known good commit:** `413b1ae`
+**Rollback:** `git checkout 413b1ae -- src/bots.ts src/mattermost.ts bots.yaml && npm run build`
 
 ---
 

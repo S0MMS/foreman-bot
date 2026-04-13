@@ -87,10 +87,11 @@ function buildChannelBotMap(): void {
       token: MM_FOREMAN_TOKEN,  // single foreman bot token for all channels
       userId: MM_FOREMAN_USER_ID || MM_ARCHITECT_USER_ID || "",  // foreman bot's user ID for reactions
     });
-    // Initialize channel session with the bot's provider and model from bots.yaml
+    // Initialize channel session with the bot's provider, model, and auto-approve from bots.yaml
     if (botEntry.definition.type === 'sdk') {
       setAdapter(channelId, botEntry.definition.provider);
       setModel(channelId, botEntry.definition.model);
+      if (botEntry.definition.auto_approve) setAutoApprove(channelId, true);
     }
   }
   console.log(`[mattermost] Channel→bot routing: ${channelBotMap.size} channels mapped from registry`);

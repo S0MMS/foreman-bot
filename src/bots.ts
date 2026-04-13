@@ -32,6 +32,7 @@ export interface SdkBot extends BotBase {
   type: 'sdk';
   provider: SdkProvider;
   model: string;
+  auto_approve?: boolean;
 }
 
 export interface WebhookBot extends BotBase {

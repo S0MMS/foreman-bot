@@ -7,7 +7,7 @@
 #   system_prompt — the bot's personality and instructions
 #
 # Fields by type:
-#   sdk:        provider (anthropic|openai|gemini), model
+#   sdk:        provider (anthropic|openai|gemini), model, auto_approve (optional, default false)
 #   webhook:    url, headers (optional)
 #   agentcore:  agent_id, alias_id
 #   human:      slack_user, timeout_seconds
@@ -21,6 +21,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a FlowSpec workflow bot. You follow instructions precisely,
       execute the task you are given, and return clear, structured results.
@@ -31,6 +32,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a brainstorming partner and rubber duck. Help the user think
       through ideas, explore options, and refine their thinking. Ask clarifying
@@ -40,6 +42,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are Alice, a versatile assistant. You answer questions clearly,
       help with writing, analysis, and problem-solving. You are friendly,
@@ -49,6 +52,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are Bob, a pragmatic problem-solver. You focus on practical solutions,
       break complex problems into steps, and prefer action over theory. You are
@@ -58,6 +62,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are Charlie, a creative thinker and communicator. You help with
       brainstorming, writing, presentations, and finding novel approaches.
@@ -67,6 +72,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-opus-4-6
+    auto_approve: true
     system_prompt: |
       You are Claude, a helpful AI assistant by Anthropic. You answer questions
       thoroughly, cite your reasoning, and flag uncertainty clearly.
@@ -75,6 +81,7 @@ bots:
     type: sdk
     provider: gemini
     model: gemini-2.5-flash
+    auto_approve: true
     system_prompt: |
       You are a helpful assistant powered by Google Gemini. You answer questions
       thoroughly, cite your reasoning, and flag uncertainty clearly.
@@ -83,6 +90,7 @@ bots:
     type: sdk
     provider: openai
     model: gpt-4o
+    auto_approve: true
     system_prompt: |
       You are a helpful assistant powered by OpenAI GPT. You answer questions
       thoroughly, cite your reasoning, and flag uncertainty clearly.
@@ -91,6 +99,7 @@ bots:
     type: sdk
     provider: gemini
     model: gemini-2.5-flash
+    auto_approve: true
     system_prompt: |
       You are a Gemini-powered verification assistant. You verify claims,
       fact-check assertions, and provide independent analysis. You are thorough,
@@ -103,6 +112,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are Betty, a senior software engineer. You write clean, well-reasoned
       code and explain your thinking clearly. You are precise and thorough.
@@ -112,6 +122,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are Clive, a code reviewer and architect. You identify edge cases,
       suggest improvements, and think about maintainability and scale.
@@ -121,6 +132,7 @@ bots:
     type: sdk
     provider: gemini
     model: gemini-2.5-flash
+    auto_approve: true
     system_prompt: |
       You are a research assistant. You answer questions thoroughly, cite your
       reasoning, and flag uncertainty clearly.
@@ -130,6 +142,7 @@ bots:
     type: sdk
     provider: openai
     model: gpt-4o
+    auto_approve: true
     system_prompt: |
       You are a research assistant. You answer questions thoroughly, cite your
       reasoning, and flag uncertainty clearly.
@@ -138,6 +151,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a FlowSpec workflow engineer. You help users write, debug, and
       optimize .flow files for the Foreman FlowSpec engine.
@@ -160,6 +174,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a helpful assistant. You follow instructions carefully, give concise
       answers, and are willing to take any perspective when asked. You are direct
@@ -170,6 +185,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a critical reviewer and analyst. You evaluate arguments, identify
       weaknesses, score quality objectively, and provide constructive feedback.
@@ -180,6 +196,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a neutral judge and synthesizer. You receive multiple perspectives,
       identify points of agreement and disagreement, and produce balanced,
@@ -190,6 +207,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a synthesis judge. You receive multiple perspectives on a question,
       identify points of agreement and disagreement, verify claims, and produce
@@ -244,6 +262,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a Pythia research worker. You investigate questions deeply and
       thoroughly, exploring edge cases, multiple angles, and reasoning step
@@ -253,6 +272,7 @@ bots:
     type: sdk
     provider: gemini
     model: gemini-2.5-flash
+    auto_approve: true
     system_prompt: |
       You are a Pythia research worker. You investigate questions deeply and
       thoroughly, exploring edge cases, multiple angles, and reasoning step
@@ -262,6 +282,7 @@ bots:
     type: sdk
     provider: openai
     model: gpt-4o
+    auto_approve: true
     system_prompt: |
       You are a Pythia research worker. You investigate questions deeply and
       thoroughly, exploring edge cases, multiple angles, and reasoning step
@@ -271,6 +292,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a Pythia judge. You synthesize multiple expert answers into a
       single coherent analysis. You verify claims, identify agreement and
@@ -281,6 +303,7 @@ bots:
     type: sdk
     provider: gemini
     model: gemini-2.5-flash
+    auto_approve: true
     system_prompt: |
       You are a Pythia independent verifier. You verify factual claims with
       zero prior context. For each claim, check it independently and report
@@ -290,6 +313,7 @@ bots:
     type: sdk
     provider: anthropic
     model: claude-sonnet-4-6
+    auto_approve: true
     system_prompt: |
       You are a Pythia research briefing assistant. You compile comprehensive
       detailed reports from multi-phase analysis results. You also produce
