@@ -134,34 +134,67 @@ function mimetypeToExt(mimetype: string): string {
   }
 }
 
-async function downloadMattermostImages(fileIds: string[], token: string): Promise<string[]> {
+const TEXT_MIMETYPES = new Set([
+  "text/plain", "text/markdown", "text/csv", "text/html", "text/xml",
+  "application/json", "application/xml", "application/yaml",
+]);
+
+function isTextFile(mimetype: string, filename: string): boolean {
+  if (TEXT_MIMETYPES.has(mimetype)) return true;
+  // Catch common text extensions that Mattermost may report as application/octet-stream
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return ["md", "txt", "json", "yaml", "yml", "csv", "xml", "html", "ts", "js", "py", "sh", "sql", "toml", "ini", "cfg", "log", "flow"].includes(ext);
+}
+
+interface MattermostAttachments {
+  imagePaths: string[];
+  fileTexts: string[];
+}
+
+async function downloadMattermostAttachments(fileIds: string[], token: string): Promise<MattermostAttachments> {
   const imageDir = join(tmpdir(), "foreman-images");
   mkdirSync(imageDir, { recursive: true });
-  const savedPaths: string[] = [];
+  const imagePaths: string[] = [];
+  const fileTexts: string[] = [];
   for (const fileId of fileIds) {
     try {
-      // Get file info to check mimetype
       const info = await mmFetch("GET", `/files/${fileId}/info`, undefined, token);
-      if (!SUPPORTED_IMAGE_TYPES.has(info.mime_type)) continue;
+      const mimetype: string = info.mime_type || "";
+      const filename: string = info.name || "";
 
-      // Download the file content
-      const res = await fetch(`${MM_URL}/api/v4/files/${fileId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        console.error(`[mattermost] Image download failed for ${fileId}: HTTP ${res.status}`);
-        continue;
+      if (SUPPORTED_IMAGE_TYPES.has(mimetype)) {
+        // Download image to disk
+        const res = await fetch(`${MM_URL}/api/v4/files/${fileId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          console.error(`[mattermost] Image download failed for ${fileId}: HTTP ${res.status}`);
+          continue;
+        }
+        const buffer = Buffer.from(await res.arrayBuffer());
+        const ext = mimetypeToExt(mimetype);
+        const savePath = join(imageDir, `${randomUUID()}.${ext}`);
+        writeFileSync(savePath, buffer);
+        imagePaths.push(savePath);
+      } else if (isTextFile(mimetype, filename)) {
+        // Download text file and inline its content
+        const res = await fetch(`${MM_URL}/api/v4/files/${fileId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          console.error(`[mattermost] File download failed for ${fileId}: HTTP ${res.status}`);
+          continue;
+        }
+        const text = await res.text();
+        fileTexts.push(`**Attached file: ${filename}**\n\`\`\`\n${text}\n\`\`\``);
+      } else {
+        console.log(`[mattermost] Skipping unsupported file type: ${mimetype} (${filename})`);
       }
-      const buffer = Buffer.from(await res.arrayBuffer());
-      const ext = mimetypeToExt(info.mime_type);
-      const savePath = join(imageDir, `${randomUUID()}.${ext}`);
-      writeFileSync(savePath, buffer);
-      savedPaths.push(savePath);
     } catch (err) {
       console.error(`[mattermost] Failed to download file ${fileId}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return savedPaths;
+  return { imagePaths, fileTexts };
 }
 
 async function postInteractiveMessage(
@@ -880,16 +913,28 @@ function connectWebSocket(): void {
         await new Promise(resolve => setTimeout(resolve, 1500));
       };
 
-      // Download any attached images
-      const imagePaths = fileIds.length > 0
-        ? await downloadMattermostImages(fileIds, reactToken)
-        : [];
+      // Download any attached files (images + text)
+      const attachments = fileIds.length > 0
+        ? await downloadMattermostAttachments(fileIds, reactToken)
+        : { imagePaths: [], fileTexts: [] };
+
+      // Build final prompt: user text + any inlined text file contents
+      let finalText = processedText;
+      if (attachments.fileTexts.length > 0) {
+        const fileContext = attachments.fileTexts.join("\n\n");
+        finalText = finalText ? `${finalText}\n\n${fileContext}` : `The user uploaded the following file(s). Please review and respond.\n\n${fileContext}`;
+      }
+      // If only images (no text, no text files), use a default prompt
+      if (!finalText && attachments.imagePaths.length > 0) {
+        finalText = "The user uploaded the following image(s). Please describe what you see.";
+      }
+      if (!finalText) return; // no text and no processable files
 
       try {
         if (botConfig && getBotTransport(botConfig.name) === 'kafka') {
-          await handleKafkaTransportMessage(channel, processedText, botConfig);
+          await handleKafkaTransportMessage(channel, finalText, botConfig);
         } else {
-          await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost, botConfig ?? undefined, imagePaths.length > 0 ? imagePaths : undefined);
+          await processChannelMessage(channel, finalText, requesterId, isDM, onBeforePost, botConfig ?? undefined, attachments.imagePaths.length > 0 ? attachments.imagePaths : undefined);
         }
       } catch (err) {
         await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
