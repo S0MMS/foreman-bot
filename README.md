@@ -1,154 +1,184 @@
 # Foreman
 
-Control [Claude Code](https://claude.ai/code) sessions from Slack. Run Claude locally on your Mac and send it tasks from your phone.
-
-## How it works
-
-Foreman runs on your Mac and connects to Slack via Socket Mode (no public URL needed). You message the bot in Slack, it runs Claude Code locally, and replies with the result. Tool calls that modify files or run commands require your approval via Slack buttons.
+A multi-model AI agent bridge for teams. Chat with Claude, Gemini, and GPT bots from a shared Mattermost instance. Orchestrate multi-bot workflows with FlowSpec.
 
 ## Prerequisites
 
-1. **[Claude Code](https://claude.ai/code)** — Foreman controls Claude Code, so you need it installed first:
-   ```sh
-   npm install -g @anthropic-ai/claude-code
-   ```
-2. **Node.js 18+**
-3. **An Anthropic API key** (`sk-ant-...`) — same key used by Claude Code
-4. **A Slack workspace** where you can create apps
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Node.js](https://nodejs.org/) 18+
+- An [Anthropic API key](https://console.anthropic.com/) (required)
+- Google Gemini and/or OpenAI API keys (optional — channels show setup instructions if missing)
 
-## Install
+## Quick Start
 
-```sh
-npm install -g foreman-bot
+```bash
+# 1. Clone and install
+git clone https://github.com/S0MMS/foreman-bot.git
+cd foreman-bot
+npm install
+
+# 2. Set your API key(s)
+export ANTHROPIC_API_KEY=sk-ant-...
+export GEMINI_API_KEY=AIza...        # optional
+export OPENAI_API_KEY=sk-...         # optional
+
+# 3. Run setup (starts Docker, creates everything)
+npm run setup
+
+# 4. Start Foreman
+npm run build && npm start
 ```
 
-## Setup
+That's it. Open [http://localhost:8065](http://localhost:8065) and log in with the credentials printed by the setup script.
 
-### 1. Create your Slack app
+## What You Get
 
-1. Go to [api.slack.com/apps](https://api.slack.com/apps)
-2. Click **Create New App** → **From Manifest**
-3. Paste the contents of [`slack-manifest.json`](./slack-manifest.json) from this repo
-4. Click **Install to Workspace**
-5. From **OAuth & Permissions**, copy your **Bot Token** (`xoxb-...`)
-6. From **Basic Information** → **App-Level Tokens**, create a token with the `connections:write` scope and copy it (`xapp-...`)
+Setup creates a fully configured Mattermost instance with 20+ channels, organized into sidebar categories:
 
-### 2. Run the setup wizard
+| Category | Channels | What they do |
+|---|---|---|
+| **General** | `#thought-pad`, `#alice`, `#bob`, `#charlie` | Everyday AI chat, brainstorming |
+| **Models** | `#claude`, `#gemini`, `#gpt` | Raw model access — one channel per provider |
+| **FlowSpec Tutorial** | `#flowspec-engineer`, `#flowbot-01/02/03` | Learn multi-bot workflows |
+| **TECHOPS-2187** | `#claude-worker`, `#gemini-worker`, `#gpt-worker`, `#claude-judge` | Real-world workflow example |
+| **Pythia** | `#pythia-*` | Multi-model research pipeline |
 
-```sh
-foreman init
-```
+Every channel is an independent AI session. Each has its own model, conversation history, and persona. Type a message and the bot responds.
 
-This prompts for your tokens and writes them to `~/.foreman/config.json`.
+## Commands
 
-### 3. Start Foreman
-
-```sh
-foreman
-```
-
-Invite the bot to a Slack channel and start messaging it.
-
-## Usage
-
-Message the bot in any channel it's been invited to. Each channel gets its own independent Claude session with its own working directory, model, and conversation history.
-
-The bot's persona name comes from the channel name — put it in `#clive` and it's Clive, `#betty` and it's Betty. DMs default to "Foreman".
-
-### Tool approvals
-
-When Claude wants to edit a file or run a shell command, Foreman posts an **Approve / Deny** button in Slack. Read-only tools (file reads, searches, web fetches) are auto-approved.
-
-### Slash commands
+Use `/f` in any channel to control sessions:
 
 | Command | Description |
 |---|---|
-| `/cc cwd <path>` | Set working directory for this channel (`~/` paths supported) |
-| `/cc model <name>` | Set model (`opus`, `sonnet`, `haiku`, vendor:model, or full model ID) |
-| `/cc name <name>` | Override the bot's persona name for this channel |
-| `/cc plugin <path>` | Load a Claude Code plugin |
-| `/cc stop` | Cancel the running query |
-| `/cc session` | Show current session info |
-| `/cc new` | Clear session and start fresh |
-| `/cc canvas list` | List all canvases in this channel |
-| `/cc run <file.flow> [workflow]` | Run a FlowSpec workflow from a file |
-| `/cc run "Canvas Title" [workflow]` | Run a FlowSpec workflow from a named canvas |
-| `/cc delphi #w1 #w2 #w3 "question"` | Run a 3-phase Delphi multi-bot verification workflow |
-| `/cc reboot` | Restart the Foreman process |
+| `/f model <name>` | Switch model (`opus`, `sonnet`, `haiku`, or `vendor:model` like `gemini:gemini-2.5-flash`) |
+| `/f session` | Show current session info |
+| `/f new` | Reset the session (fresh conversation) |
+| `/f auto-approve on\|off` | Toggle tool approval prompts |
+| `/f stop` | Abort a running query |
+| `/f run <file.flow>` | Run a FlowSpec workflow |
 
-## Running as a service
+## Tool Approvals
 
-On macOS, `foreman init` offers to install a launchd service that starts Foreman on login and keeps it running.
+When a bot wants to edit a file or run a shell command, Foreman posts an **Approve / Deny** button in the channel. Read-only tools (file reads, searches, web fetches) are auto-approved. You can skip all prompts with `/f auto-approve on` — this is enabled by default for all out-of-the-box bots.
 
-If you prefer manual setup, create `~/Library/LaunchAgents/com.foreman.bot.plist`:
+## FlowSpec Workflows
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.foreman.bot</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/path/to/node</string>
-    <string>/path/to/foreman/dist/index.js</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-  </dict>
-  <key>WorkingDirectory</key>
-  <string>/path/to/foreman</string>
-  <key>KeepAlive</key>
-  <true/>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>ThrottleInterval</key>
-  <integer>5</integer>
-  <key>StandardOutPath</key>
-  <string>/Users/you/.foreman/foreman.out.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/you/.foreman/foreman.err.log</string>
-</dict>
-</plist>
+FlowSpec is a plain-text language for orchestrating multi-bot workflows. Bots work in sequence or parallel, with results flowing between them.
+
+```
+workflow "Quick Review"
+  ask @alice "Summarize the key risks in this PR"
+  ask @bob "What would you change about this approach?"
+
+  at the same time
+    ask @alice "Draft a response addressing Bob's feedback"
+    ask @bob "Rate Alice's summary on a scale of 1-10"
+  done
+end
 ```
 
-Then load it:
+Run it: `/f run flows/my-workflow.flow`
 
-```sh
+See `flows/flowspec-tutorial.flow` for a hands-on walkthrough with 7 progressive lessons.
+
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Mattermost  │────▶│   Foreman    │────▶│ Claude / GPT │
+│  (Chat UI)   │◀────│  (Node.js)   │◀────│  / Gemini    │
+└──────────────┘     └──────┬───────┘     └──────────────┘
+                            │
+                     ┌──────┴───────┐
+                     │   Redpanda   │  Bot-to-bot messaging
+                     │   (Kafka)    │  for FlowSpec workflows
+                     └──────┬───────┘
+                            │
+                     ┌──────┴───────┐
+                     │   Temporal   │  Durable workflow execution
+                     │              │  (retries, state, history)
+                     └──────────────┘
+```
+
+All infrastructure runs in Docker via `docker compose`. Foreman itself runs natively on Node.js.
+
+| Service | URL | Purpose |
+|---|---|---|
+| Mattermost | [localhost:8065](http://localhost:8065) | Chat with bots |
+| Redpanda Console | [localhost:8080](http://localhost:8080) | Inspect bot message traffic |
+| Temporal UI | [localhost:8233](http://localhost:8233) | Monitor workflow executions |
+
+## Adding API Keys Later
+
+If you skipped Gemini or OpenAI during setup, add them anytime:
+
+```bash
+# Option A: Re-run setup with new keys
+export GEMINI_API_KEY=AIza...
+export OPENAI_API_KEY=sk-...
+npm run setup
+
+# Option B: Edit config directly
+# Add to ~/.foreman/config.json:
+#   "geminiApiKey": "AIza..."
+#   "openaiApiKey": "sk-..."
+```
+
+Restart Foreman after adding keys. Channels that showed "API key not configured" will start working.
+
+## Slack (Optional)
+
+Foreman can also connect to Slack in parallel with Mattermost. Add `slackBotToken` and `slackAppToken` to `~/.foreman/config.json`. See `slack-manifest.json` for the Slack app manifest. Use `/cc` instead of `/f` for slash commands in Slack.
+
+## Running as a Service
+
+On macOS, you can use launchd to keep Foreman running:
+
+```bash
+# Install the launchd service
+foreman init    # offers to create the plist automatically
+
+# Or manually load it
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.foreman.bot.plist
 ```
 
-Check status:
+Logs: `~/.foreman/foreman.out.log` and `~/.foreman/foreman.err.log`
 
-```sh
-launchctl print gui/$(id -u)/com.foreman.bot
+## Project Structure
+
 ```
-
-Logs are at `~/.foreman/foreman.out.log` and `~/.foreman/foreman.err.log`.
+src/                  TypeScript source
+  index.ts            Entry point — starts all transports
+  mattermost.ts       Mattermost WebSocket bridge
+  slack.ts            Slack Socket Mode bridge (optional)
+  adapters/           Claude, Gemini, OpenAI agent adapters
+  temporal/           Workflow engine (workflows, activities, worker)
+  flowspec/           FlowSpec parser and compiler
+bots.yaml             Bot definitions — models, prompts, providers
+config/
+  channel-registry.yaml   Channel ID mappings per transport
+flows/                FlowSpec workflow files (.flow)
+scripts/
+  bootstrap.sh        Zero-browser Mattermost setup
+docker-compose.yml    Redpanda + Mattermost + Temporal + Postgres
+```
 
 ## Configuration
 
-Config lives at `~/.foreman/config.json` (written by `foreman init`):
+All config lives in `~/.foreman/config.json`, written automatically by `npm run setup`:
 
-```json
-{
-  "slackBotToken": "xoxb-...",
-  "slackAppToken": "xapp-...",
-  "anthropicApiKey": "sk-ant-...",
-  "defaultCwd": "/Users/you/projects"
-}
-```
+| Field | Description |
+|---|---|
+| `anthropicApiKey` | Anthropic API key (required for Claude bots) |
+| `geminiApiKey` | Google Gemini API key (optional) |
+| `openaiApiKey` | OpenAI API key (optional) |
+| `mattermostUrl` | Mattermost server URL (default: `http://localhost:8065`) |
+| `mattermostAdminToken` | Admin access token for Mattermost API |
+| `defaultCwd` | Default working directory for bot sessions |
+| `slackBotToken` | Slack bot token (optional, for Slack bridge) |
+| `slackAppToken` | Slack app token (optional, for Slack bridge) |
 
-A `.env` file in the project directory also works and takes lower priority than `config.json`.
+## License
 
-## Running from source
-
-```sh
-git clone https://github.com/your-username/foreman
-cd foreman
-npm install
-npm run dev    # uses .env for config
-```
+MIT

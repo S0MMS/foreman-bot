@@ -10,10 +10,12 @@
  */
 
 import WebSocket from "ws";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { isAbsolute, join } from "path";
 import { createRequire } from "module";
 import { dirname } from "path";
+import { tmpdir } from "os";
+import { randomUUID } from "crypto";
 import type { ApprovalResult } from "./types.js";
 import {
   getState,
@@ -30,7 +32,7 @@ import {
   setAdapter,
   setContextPrimer,
 } from "./session.js";
-import { MODEL_ALIASES, generateCuteName } from "./types.js";
+import { MODEL_ALIASES, generateCuteName, SUPPORTED_IMAGE_TYPES } from "./types.js";
 import { startSession, resumeSession, abortCurrentQuery } from "./claude.js";
 import { readConfig } from "./config.js";
 import { createCanvasMcpServer } from "./mcp-canvas.js";
@@ -123,6 +125,45 @@ export async function postMessage(channelId: string, text: string, botToken?: st
   }
 }
 
+function mimetypeToExt(mimetype: string): string {
+  switch (mimetype) {
+    case "image/jpeg": return "jpg";
+    case "image/gif": return "gif";
+    case "image/webp": return "webp";
+    default: return "png";
+  }
+}
+
+async function downloadMattermostImages(fileIds: string[], token: string): Promise<string[]> {
+  const imageDir = join(tmpdir(), "foreman-images");
+  mkdirSync(imageDir, { recursive: true });
+  const savedPaths: string[] = [];
+  for (const fileId of fileIds) {
+    try {
+      // Get file info to check mimetype
+      const info = await mmFetch("GET", `/files/${fileId}/info`, undefined, token);
+      if (!SUPPORTED_IMAGE_TYPES.has(info.mime_type)) continue;
+
+      // Download the file content
+      const res = await fetch(`${MM_URL}/api/v4/files/${fileId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        console.error(`[mattermost] Image download failed for ${fileId}: HTTP ${res.status}`);
+        continue;
+      }
+      const buffer = Buffer.from(await res.arrayBuffer());
+      const ext = mimetypeToExt(info.mime_type);
+      const savePath = join(imageDir, `${randomUUID()}.${ext}`);
+      writeFileSync(savePath, buffer);
+      savedPaths.push(savePath);
+    } catch (err) {
+      console.error(`[mattermost] Failed to download file ${fileId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return savedPaths;
+}
+
 async function postInteractiveMessage(
   channelId: string,
   text: string,
@@ -205,6 +246,7 @@ async function processChannelMessage(
   isDM = false,
   onBeforePost?: () => Promise<void>,
   botConfig?: BotConfig,
+  imagePaths?: string[],
 ): Promise<{ result: string; sessionId: string; cost: number; turns: number; tokensIn: number; tokensOut: number }> {
   const state = getState(channel);
 
@@ -269,13 +311,13 @@ async function processChannelMessage(
   let result;
   if (state.sessionId) {
     try {
-      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any, undefined, undefined, systemPromptOverride);
+      result = await resumeSession(channel, text, state.sessionId, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, null as any, undefined, undefined, systemPromptOverride);
     } catch {
       clearSession(channel);
-      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any, undefined, undefined, systemPromptOverride);
+      result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, null as any, undefined, undefined, systemPromptOverride);
     }
   } else {
-    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, undefined, mcpServer, null as any, undefined, undefined, systemPromptOverride);
+    result = await startSession(channel, text, state.cwd, name, onApprovalNeeded, onProgress, imagePaths, mcpServer, null as any, undefined, undefined, systemPromptOverride);
   }
   if (result.sessionId) setSessionId(channel, result.sessionId);
 
@@ -792,7 +834,8 @@ function connectWebSocket(): void {
 
       const channel = post.channel_id;
       const text = (post.message || "").trim();
-      if (!text) return;
+      const fileIds: string[] = post.file_ids || [];
+      if (!text && fileIds.length === 0) return;
 
       const requesterId = post.user_id;
       // Mattermost channel_type "D" = direct message, "G" = group DM
@@ -837,11 +880,16 @@ function connectWebSocket(): void {
         await new Promise(resolve => setTimeout(resolve, 1500));
       };
 
+      // Download any attached images
+      const imagePaths = fileIds.length > 0
+        ? await downloadMattermostImages(fileIds, reactToken)
+        : [];
+
       try {
         if (botConfig && getBotTransport(botConfig.name) === 'kafka') {
           await handleKafkaTransportMessage(channel, processedText, botConfig);
         } else {
-          await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost, botConfig ?? undefined);
+          await processChannelMessage(channel, processedText, requesterId, isDM, onBeforePost, botConfig ?? undefined, imagePaths.length > 0 ? imagePaths : undefined);
         }
       } catch (err) {
         await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
