@@ -184,7 +184,7 @@ export class GeminiAdapter implements AgentAdapter {
       this.histories.set(channelId, updatedHistory.slice(-MAX_HISTORY_MESSAGES));
       saveHistoriesToDisk(this.histories);
 
-      return { result: finalText, sessionId: channelId, cost: 0, turns };
+      return { result: finalText, sessionId: channelId, cost: 0, turns, tokensIn: 0, tokensOut: 0 };
     } finally {
       setRunning(channelId, false);
       setAbortController(channelId, null);

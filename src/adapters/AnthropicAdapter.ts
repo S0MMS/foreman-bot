@@ -122,6 +122,8 @@ async function collectMessages(
   let sessionId = "";
   let cost = 0;
   let turns = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
 
   for await (const message of q) {
     if (message.type === "system" && message.subtype === "init") {
@@ -140,10 +142,12 @@ async function collectMessages(
       }
       cost = message.total_cost_usd || 0;
       turns = message.num_turns || 0;
+      tokensIn = message.usage?.input_tokens || 0;
+      tokensOut = message.usage?.output_tokens || 0;
     }
   }
 
-  return { result: resultText, sessionId, cost, turns };
+  return { result: resultText, sessionId, cost, turns, tokensIn, tokensOut };
 }
 
 export class AnthropicAdapter implements AgentAdapter {

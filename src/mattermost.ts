@@ -195,7 +195,7 @@ async function processChannelMessage(
   isDM = false,
   onBeforePost?: () => Promise<void>,
   botConfig?: BotConfig,
-): Promise<{ result: string; sessionId: string; cost: number; turns: number }> {
+): Promise<{ result: string; sessionId: string; cost: number; turns: number; tokensIn: number; tokensOut: number }> {
   const state = getState(channel);
 
   // Inject context primer if set
@@ -287,10 +287,11 @@ async function processChannelMessage(
   if (result.cost > 0) {
     const totalSec = Math.round((Date.now() - sessionStartMs) / 1000);
     const elapsedStr = totalSec >= 60 ? `${Math.floor(totalSec / 60)}m ${totalSec % 60}s` : `${totalSec}s`;
-    await postMessage(channel, `*Done in ${result.turns} turns | $${result.cost.toFixed(4)} | ${elapsedStr}*`, botToken);
+    const tokenStr = result.tokensIn > 0 ? ` | ${result.tokensIn.toLocaleString()} in / ${result.tokensOut.toLocaleString()} out` : '';
+    await postMessage(channel, `*Done in ${result.turns} turns | $${result.cost.toFixed(4)}${tokenStr} | ${elapsedStr}*`, botToken);
   }
 
-  return { result: result.result || "", sessionId: result.sessionId || "", cost: result.cost || 0, turns: result.turns || 0 };
+  return { result: result.result || "", sessionId: result.sessionId || "", cost: result.cost || 0, turns: result.turns || 0, tokensIn: result.tokensIn || 0, tokensOut: result.tokensOut || 0 };
 }
 
 /** Get the foreman bot token for FlowSpec dispatch. Throws if not configured. */

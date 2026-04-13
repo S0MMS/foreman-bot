@@ -645,7 +645,7 @@ export class OpenAIAdapter implements AgentAdapter {
         onMessage({ type: "text", text: finalText });
       }
 
-      return { result: finalText, sessionId: channelId, cost: 0, turns };
+      return { result: finalText, sessionId: channelId, cost: 0, turns, tokensIn: 0, tokensOut: 0 };
     } finally {
       setRunning(channelId, false);
       setAbortController(channelId, null);

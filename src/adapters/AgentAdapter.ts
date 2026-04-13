@@ -32,6 +32,8 @@ export interface QueryResult {
   sessionId: string;
   cost: number;
   turns: number;
+  tokensIn: number;
+  tokensOut: number;
 }
 
 export interface AgentAdapter {

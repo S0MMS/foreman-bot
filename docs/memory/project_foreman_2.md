@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — prompt + response truncation live, Pythia V ready to re-test
+## Current Health: ✅ STABLE — token usage in footer, Datadog rolled back, Pythia V truncation live
 
-**Last known good commit:** `3a9afe6`
-**Rollback:** `git checkout 3a9afe6 -- src/mattermost.ts && npm run build`
+**Last known good commit:** `0c3bb4e`
+**Rollback:** `git checkout 0c3bb4e -- src/adapters/AgentAdapter.ts src/adapters/AnthropicAdapter.ts src/adapters/GeminiAdapter.ts src/adapters/OpenAIAdapter.ts src/claude.ts src/mattermost.ts src/slack.ts && npm run build`
 
 ---
 
