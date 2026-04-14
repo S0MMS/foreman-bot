@@ -15,9 +15,14 @@
 
 ## 27. foreman-compute + OpenAI/Gemini Adapter Parity
 - **Status**: Idea (Phase 2)
-- **Concept**: Extract the hardcoded tools in `OpenAIAdapter.ts` (RunBash, ReadFile, WriteFile, EditFile) into a proper `foreman-compute` domain file (`mcp-compute.ts`), then refactor `OpenAIAdapter` and `GeminiAdapter` to pull their tools from `foreman-toolbelt` (honoring `mcp_servers` from `bots.yaml`). Once done, all three providers have equal access to the full toolbelt.
-- **Why it matters**: GPT and Gemini bots currently can't use Jira, Canvas, GitHub, Bitrise, or Google Workspace. This refactor gives them the same capabilities as Claude bots. Also makes `foreman-compute` declarative — bots that need RunBash just add it to `mcp_servers`.
-- **Unlocks**: foreman-google (#28) automatically works for all providers after this lands.
+- **Concept**: OpenAI and Gemini adapters already have most tools (Jira, GitHub, Canvas, etc.) duplicated in `OpenAIAdapter.ts` in OpenAI function-calling schema format. The problem is they drift — adding a new foreman-toolbelt tool requires updating both `mcp-*.ts` AND `OpenAIAdapter.ts`. Google Workspace is entirely absent for GPT/Gemini. Goal: eliminate the drift and add Google parity.
+- **Why it matters**: New tools added to foreman-toolbelt don't auto-appear in GPT/Gemini. Any tool added once should work for all three providers.
+- **Effort assessment**:
+  - **Option A (minimal, ~1-2 hours)**: Add Google Workspace to `executeTool` by spawning the workspace-mcp subprocess and proxying calls. Solves Google parity without restructuring anything. Keeps the two-schema approach but at least closes the gap.
+  - **Option B (proper, ~half-day)**: Write a bridge that auto-generates OpenAI function schemas from the foreman-toolbelt MCP `tool()` definitions, then route `executeTool` calls to the same MCP handlers. Eliminates duplication permanently — add a tool once and all three providers get it.
+  - **Recommendation**: Option A for quick Google parity, Option B when the duplication pain becomes real.
+- **Key insight**: The underlying implementations are already shared — `executeTool` in OpenAIAdapter calls the same `jira.ts`, `canvas.ts`, `github.ts` as the MCP domain files. The duplication is only in the schema definitions, not the business logic.
+- **Unlocks**: foreman-google (#28) automatically works for all providers after Option B lands.
 
 ---
 
