@@ -120,7 +120,7 @@ async function mmFetch(method: string, endpoint: string, body?: unknown, token?:
 
 export async function postMessage(channelId: string, text: string, botToken?: string): Promise<void> {
   try {
-    await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, botToken || MM_ARCHITECT_TOKEN);
+    await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, botToken || MM_FOREMAN_TOKEN || MM_ARCHITECT_TOKEN);
   } catch (err) {
     console.error(`[mattermost] postMessage failed for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`);
   }
