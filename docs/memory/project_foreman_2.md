@@ -12,10 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ STABLE — toolbelt modularization complete
+## Current Health: 🔄 REBOOTING — single-token Mattermost refactor
 
-**Last known good commit:** `cc3f389`
-**Rollback:** `git checkout 2c6cf44 -- src/mcp-canvas.ts src/bots.ts src/mattermost.ts && rm -f src/mcp-slack.ts src/mcp-atlassian.ts src/mcp-github.ts src/mcp-bitrise.ts src/mcp-admin.ts src/mcp-xcode.ts src/mcp-toolbelt.ts && npm run build`
+**Last known good commit:** `784fda0`
+**Rollback:** `git checkout 784fda0 -- src/mattermost.ts && npm run build && launchctl unload ~/Library/LaunchAgents/com.foreman.bot.plist && launchctl load ~/Library/LaunchAgents/com.foreman.bot.plist`
 
 ---
 

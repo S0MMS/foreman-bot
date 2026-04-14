@@ -52,8 +52,6 @@ let MM_URL = "";
 let MM_ADMIN_TOKEN = "";
 let MM_TEAM_ID = "";
 let MM_BOT_TOKENS: Record<string, string> = {};
-let MM_ARCHITECT_TOKEN = "";
-let MM_ARCHITECT_USER_ID = "";
 let MM_FOREMAN_TOKEN = "";
 let MM_FOREMAN_USER_ID = "";
 // Mattermost runs in Docker — it calls this URL when a button is clicked.
@@ -63,9 +61,9 @@ let MM_ACTION_URL = "http://host.docker.internal:3001";
 // Map of Mattermost bot user IDs — messages from these are filtered out
 const botUserIds = new Set<string>();
 
-// Bot routing: channelId → bot config (name, system prompt, token)
+// Bot routing: channelId → bot config (name, system prompt, persona)
 // Built from channel-registry.yaml at startup — one foreman bot serves all channels.
-interface BotConfig { name: string; displayName: string; systemPrompt: string; token: string; userId: string; mcpServers?: string[]; }
+interface BotConfig { name: string; displayName: string; systemPrompt: string; userId: string; mcpServers?: string[]; }
 const channelBotMap = new Map<string, BotConfig>();
 
 function identifyChannelBot(channelId: string): BotConfig | null {
@@ -86,8 +84,7 @@ function buildChannelBotMap(): void {
       name: botName,
       displayName,
       systemPrompt: botEntry.definition.system_prompt,
-      token: MM_FOREMAN_TOKEN,  // single foreman bot token for all channels
-      userId: MM_FOREMAN_USER_ID || MM_ARCHITECT_USER_ID || "",  // foreman bot's user ID for reactions
+      userId: MM_FOREMAN_USER_ID,
       mcpServers: botEntry.definition.type === 'sdk' ? botEntry.definition.mcp_servers : undefined,
     });
     // Initialize channel session with the bot's provider, model, and auto-approve from bots.yaml
@@ -120,7 +117,7 @@ async function mmFetch(method: string, endpoint: string, body?: unknown, token?:
 
 export async function postMessage(channelId: string, text: string, botToken?: string): Promise<void> {
   try {
-    await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, botToken || MM_FOREMAN_TOKEN || MM_ARCHITECT_TOKEN);
+    await mmFetch("POST", "/posts", { channel_id: channelId, message: text }, MM_FOREMAN_TOKEN);
   } catch (err) {
     console.error(`[mattermost] postMessage failed for channel ${channelId}: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -218,16 +215,16 @@ async function postInteractiveMessage(
         })),
       }],
     },
-  }, botToken || MM_ARCHITECT_TOKEN);
+  }, MM_FOREMAN_TOKEN);
   return result.id;
 }
 
-async function updatePost(postId: string, text: string, botToken?: string): Promise<void> {
+async function updatePost(postId: string, text: string): Promise<void> {
   await mmFetch("PUT", `/posts/${postId}`, {
     id: postId,
     message: text,
     props: { attachments: [] },
-  }, botToken || MM_ARCHITECT_TOKEN);
+  }, MM_FOREMAN_TOKEN);
 }
 
 // ── Tool progress formatting ──────────────────────────────────────────────────
@@ -303,9 +300,7 @@ async function processChannelMessage(
   }
 
   const name = state.name ?? "Foreman";
-  const botToken = botConfig?.token;
 
-  // Tool approval: post interactive buttons — uses explicit botToken, no defaults
   const onApprovalNeeded = async (
     toolName: string,
     input: Record<string, unknown>,
@@ -328,13 +323,12 @@ async function processChannelMessage(
             context: { action: "deny", channel },
           },
         },
-      ], botToken).catch(() => {});
+      ]).catch(() => {});
     });
   };
 
-  // Progress messages — uses explicit botToken, no defaults
   const onProgress = (toolName: string, input: Record<string, unknown>) => {
-    postMessage(channel, formatProgress(toolName, input), botToken).catch(() => {});
+    postMessage(channel, formatProgress(toolName, input)).catch(() => {});
   };
 
   // Create MCP server — pass null for Slack app (not used in MM bridge)
@@ -362,19 +356,19 @@ async function processChannelMessage(
   const responseText = result.result || "(no response)";
   const MM_MAX_POST = 15000;
   if (responseText.length <= MM_MAX_POST) {
-    await postMessage(channel, responseText, botToken);
+    await postMessage(channel, responseText);
   } else {
     // Truncate for channel display — full response is still returned to caller
     const truncated = responseText.slice(0, MM_MAX_POST)
       + `\n\n---\n*[Truncated — full response is ${responseText.length} chars. Captured in workflow variable.]*`;
-    await postMessage(channel, truncated, botToken);
+    await postMessage(channel, truncated);
   }
 
   if (result.cost > 0) {
     const totalSec = Math.round((Date.now() - sessionStartMs) / 1000);
     const elapsedStr = totalSec >= 60 ? `${Math.floor(totalSec / 60)}m ${totalSec % 60}s` : `${totalSec}s`;
     const tokenStr = result.tokensIn > 0 ? ` | ${result.tokensIn.toLocaleString()} in / ${result.tokensOut.toLocaleString()} out` : '';
-    await postMessage(channel, `*Done in ${result.turns} turns | $${result.cost.toFixed(4)}${tokenStr} | ${elapsedStr}*`, botToken);
+    await postMessage(channel, `*Done in ${result.turns} turns | $${result.cost.toFixed(4)}${tokenStr} | ${elapsedStr}*`);
   }
 
   return { result: result.result || "", sessionId: result.sessionId || "", cost: result.cost || 0, turns: result.turns || 0, tokensIn: result.tokensIn || 0, tokensOut: result.tokensOut || 0 };
@@ -422,14 +416,10 @@ async function handleKafkaTransportMessage(
         '\n\n... [truncated — full response available in Kafka]';
     }
 
-    await postMessage(channel, responseText, botConfig.token);
+    await postMessage(channel, responseText);
   } catch (err) {
     console.error(`[mattermost] Kafka transport error for ${botConfig.name}:`, err);
-    await postMessage(
-      channel,
-      `Kafka transport error: ${err instanceof Error ? err.message : String(err)}`,
-      botConfig.token,
-    );
+    await postMessage(channel, `Kafka transport error: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -446,16 +436,12 @@ export async function processChannelMessageForFlowSpec(channelId: string, prompt
   const displayPrompt = prompt.length > MM_MAX_POST
     ? prompt.slice(0, 2000) + `\n\n---\n*[Prompt truncated — full prompt is ${prompt.length} chars]*`
     : prompt;
-  await postMessage(channelId, `📋 *FlowSpec dispatch:*\n${displayPrompt}`, token);
-  // Build a synthetic BotConfig so processChannelMessage uses the foreman token
-  // throughout all closures (onProgress, onApprovalNeeded, response posting).
-  // System prompt and model will come from the channel's session config (workspace).
+  await postMessage(channelId, `📋 *FlowSpec dispatch:*\n${displayPrompt}`);
   const foremanConfig: BotConfig = {
     name: "foreman",
     displayName: "Foreman",
     systemPrompt: "",  // no override — use channel session's system prompt
-    token,
-    userId: "",
+    userId: MM_FOREMAN_USER_ID,
   };
   const result = await processChannelMessage(channelId, prompt, '', true, undefined, foremanConfig);
   return result.result;
@@ -877,12 +863,10 @@ function connectWebSocket(): void {
 
       // Handle /f commands — either from registered slash command or typed as text
       if (text.startsWith("/f ") || text === "/f") {
-        const fBotConfig = identifyChannelBot(channel);
-        const fToken = fBotConfig?.token ?? (MM_FOREMAN_TOKEN || MM_ARCHITECT_TOKEN);
         try {
-          await handleCommand(channel, text, requesterId, fToken);
+          await handleCommand(channel, text, requesterId);
         } catch (err) {
-          await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`, fToken);
+          await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
         }
         return;
       }
@@ -890,11 +874,10 @@ function connectWebSocket(): void {
       // Handle ! escape for Claude slash commands
       const processedText = text.startsWith("!") ? "/" + text.slice(1) : text;
 
-      // Identify which bot (if any) owns this channel — routes persona + token + reactions
-      // For unregistered channels (ad-hoc), fall back to foreman bot token (since foreman is the bot the user invited)
+      // Identify which bot (if any) owns this channel — routes persona + system prompt
       const botConfig = identifyChannelBot(channel);
-      const reactUserId = botConfig?.userId ?? (MM_FOREMAN_USER_ID || MM_ARCHITECT_USER_ID);
-      const reactToken = botConfig?.token ?? (MM_FOREMAN_TOKEN || MM_ARCHITECT_TOKEN);
+      const reactUserId = botConfig?.userId ?? MM_FOREMAN_USER_ID;
+      const reactToken = MM_FOREMAN_TOKEN;
 
       // Add thinking reaction (signals: "I see your message")
       // Small delay gives the browser time to set up its reaction listener for the new post
@@ -942,7 +925,7 @@ function connectWebSocket(): void {
       } catch (err) {
         await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`);
         try {
-          await mmFetch("POST", "/reactions", { user_id: MM_ARCHITECT_USER_ID, post_id: post.id, emoji_name: "x" }, MM_ARCHITECT_TOKEN);
+          await mmFetch("POST", "/reactions", { user_id: MM_FOREMAN_USER_ID, post_id: post.id, emoji_name: "x" }, MM_FOREMAN_TOKEN);
         } catch { /* ignore */ }
       }
     }
@@ -1021,10 +1004,8 @@ export function handleSlashCommand(req: any, res: any): void {
   const { channel_id, text, user_id } = req.body;
   res.json({ response_type: "ephemeral", text: "" }); // immediate ACK
   const fullText = `/f ${(text || "").trim()}`.trim();
-  const botConfig = identifyChannelBot(channel_id);
-  const botToken = botConfig?.token;
-  handleCommand(channel_id, fullText, user_id, botToken).catch(err => {
-    postMessage(channel_id, `Error: ${err instanceof Error ? err.message : String(err)}`, botToken).catch(() => {});
+  handleCommand(channel_id, fullText, user_id).catch(err => {
+    postMessage(channel_id, `Error: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
   });
 }
 
@@ -1036,7 +1017,6 @@ export async function startMattermostBridge(): Promise<void> {
   MM_ADMIN_TOKEN = (config as any).mattermostAdminToken;
   MM_TEAM_ID = (config as any).mattermostTeamId;
   MM_BOT_TOKENS = (config as any).mattermostBotTokens || {};
-  MM_ARCHITECT_TOKEN = MM_BOT_TOKENS.architect || MM_ADMIN_TOKEN;
   MM_FOREMAN_TOKEN = MM_BOT_TOKENS.foreman || "";
   if (config.mattermostActionUrl) MM_ACTION_URL = config.mattermostActionUrl;
 
@@ -1045,31 +1025,20 @@ export async function startMattermostBridge(): Promise<void> {
     return;
   }
 
-  // Validate foreman token — required for FlowSpec
-  if (MM_FOREMAN_TOKEN) {
-    console.log("[mattermost] Foreman bot token loaded (FlowSpec infrastructure)");
-  } else {
-    console.warn("[mattermost] No foreman bot token — FlowSpec Mattermost dispatch will fail");
+  // Foreman bot token is the single posting identity for all channels
+  if (!MM_FOREMAN_TOKEN) {
+    console.error("[mattermost] CRITICAL: No foreman bot token found in mattermostBotTokens.foreman — bridge cannot post messages");
+    return;
   }
 
-  // Discover architect bot's user ID (needed for DM reactions + typing indicator)
+  // Discover foreman bot's user ID (needed for reactions + typing indicator in all channels)
   try {
-    const me = await mmFetch("GET", "/users/me", undefined, MM_ARCHITECT_TOKEN);
-    MM_ARCHITECT_USER_ID = me.id;
-    console.log(`[mattermost] Architect bot user ID: ${MM_ARCHITECT_USER_ID}`);
+    const me = await mmFetch("GET", "/users/me", undefined, MM_FOREMAN_TOKEN);
+    MM_FOREMAN_USER_ID = me.id;
+    console.log(`[mattermost] Foreman bot: ${me.username} (${MM_FOREMAN_USER_ID})`);
   } catch (err) {
-    console.warn("[mattermost] Could not fetch architect user ID:", (err as Error).message);
-  }
-
-  // Discover foreman bot's user ID (needed for channel reactions + typing indicator)
-  if (MM_FOREMAN_TOKEN) {
-    try {
-      const me = await mmFetch("GET", "/users/me", undefined, MM_FOREMAN_TOKEN);
-      MM_FOREMAN_USER_ID = me.id;
-      console.log(`[mattermost] Foreman bot user ID: ${MM_FOREMAN_USER_ID}`);
-    } catch (err) {
-      console.warn("[mattermost] Could not fetch foreman user ID:", (err as Error).message);
-    }
+    console.error("[mattermost] CRITICAL: Could not verify foreman bot token:", (err as Error).message);
+    return;
   }
 
   // Discover bot user IDs so we can filter their messages (ignore bot-to-bot)
