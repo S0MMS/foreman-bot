@@ -33,7 +33,6 @@ Foreman runs locally on your Mac. Everything else runs in Docker.
 |---|---|---|
 | **Docker Desktop** | Latest | [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) |
 | **Node.js** | 18+ | `brew install node` or [nodejs.org](https://nodejs.org/) |
-| **Temporal CLI** | Latest | `brew install temporal` |
 | **Anthropic API key** | — | [console.anthropic.com](https://console.anthropic.com/) |
 | **Gemini API key** | optional | [aistudio.google.com](https://aistudio.google.com/) |
 | **OpenAI API key** | optional | [platform.openai.com](https://platform.openai.com/) |
@@ -67,27 +66,13 @@ npm run setup
 This takes 1–2 minutes. When it finishes, it prints your Mattermost login credentials. **Save these.**
 
 > **What setup does behind the scenes:**
-> - Runs `docker compose up -d` (Redpanda + Postgres + Mattermost)
+> - Runs `docker compose up -d` (Mattermost, Postgres, Redpanda, and Temporal — everything in Docker)
 > - Calls the Mattermost API to create a team, all channels, and all bot accounts
 > - Writes `~/.foreman/config.json` with tokens for every bot
 
 ---
 
-## Step 3: Start Temporal
-
-Temporal manages durable workflow execution (FlowSpec). It runs natively — not in Docker.
-
-```bash
-temporal server start-dev
-```
-
-Keep this terminal open. Temporal stores state in memory, so if you close it mid-workflow, in-flight workflows won't resume. That's fine for development.
-
-> **Tip:** Foreman starts fine without Temporal running — you just can't run FlowSpec workflows. All direct bot chat still works.
-
----
-
-## Step 4: Start Foreman
+## Step 3: Start Foreman
 
 ```bash
 npm run build && npm start
@@ -104,7 +89,7 @@ You should see:
 
 ---
 
-## Step 5: Open Mattermost
+## Step 4: Open Mattermost
 
 Go to [http://localhost:8065](http://localhost:8065) and log in with the credentials printed by the setup script.
 
@@ -289,14 +274,10 @@ With Google OAuth credentials configured, Claude bots can read/write Google Docs
 Docker Desktop isn't running. Open it from Applications and wait for the whale icon to stop animating before running commands.
 
 **Bots not responding after a Mac reboot**
-Foreman auto-restarts via launchd, but Docker and Temporal don't. Run:
+Foreman auto-restarts via launchd, but Docker doesn't. Run:
 ```bash
 docker compose up -d
-temporal server start-dev
 ```
-
-**"Temporal connection failed" in logs**
-Run `temporal server start-dev` in a terminal. Foreman logs a warning and continues — bot chat still works, just not workflows.
 
 **Bot responds once then stops (hung session)**
 A tool call may have gotten stuck. Run `/f new` to reset the session. If that doesn't work:

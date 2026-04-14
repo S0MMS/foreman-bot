@@ -375,6 +375,7 @@ CHANNELS=(
   "gemini|gemini|Google Gemini — raw model access"
   "gpt|gpt|OpenAI GPT — raw model access"
   # GENERAL
+  "foreman-onboarding|foreman-onboarding|Developer onboarding guide and quick reference"
   "thought-pad|thought-pad|Brainstorming and rubber duck debugging"
   "alice|alice|General-purpose Claude assistant"
   "bob|bob|Pragmatic problem-solver"
@@ -415,7 +416,7 @@ if slack:
 " 2>/dev/null || echo "")
 
   # Extract mattermost entries NOT in our bootstrap list
-  BOOTSTRAP_NAMES="flowspec-engineer flowbot-01 flowbot-02 flowbot-03 claude-worker gemini-worker gpt-worker claude-judge techops-2187 pythia-claude-worker pythia-gemini-worker pythia-gpt-worker pythia-claude-judge pythia-gemini-verifier pythia-collator claude gemini gpt thought-pad alice bob charlie"
+  BOOTSTRAP_NAMES="flowspec-engineer flowbot-01 flowbot-02 flowbot-03 claude-worker gemini-worker gpt-worker claude-judge techops-2187 pythia-claude-worker pythia-gemini-worker pythia-gpt-worker pythia-claude-judge pythia-gemini-verifier pythia-collator claude gemini gpt foreman-onboarding thought-pad alice bob charlie"
   EXISTING_MM_EXTRA=$(python3 -c "
 import yaml
 with open('$REGISTRY_FILE') as f:
@@ -567,73 +568,90 @@ create_category "Models" \
   "${CHANNEL_IDS[gpt]}"
 
 create_category "General" \
+  "${CHANNEL_IDS[foreman-onboarding]}" \
   "${CHANNEL_IDS[thought-pad]}" \
   "${CHANNEL_IDS[alice]}" \
   "${CHANNEL_IDS[bob]}" \
   "${CHANNEL_IDS[charlie]}"
 
-# ── Post welcome message to town-square ─────────────────────────────────────
+# ── Post pointer to #foreman-onboarding in town-square ───────────────────────
 
 echo ""
-log "Posting welcome message to #town-square..."
+log "Posting onboarding pointer to #town-square..."
 
 TOWN_SQUARE_ID=$(mm_api GET "/teams/$TEAM_ID/channels/name/town-square" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
 if [ -n "$TOWN_SQUARE_ID" ]; then
   add_to_channel "$TOWN_SQUARE_ID" "$FOREMAN_USER_ID"
 
-  WELCOME_POST=$(cat << 'WELCOME'
-## Welcome to Foreman!
+  # Only post if Foreman hasn't already posted here (idempotent on re-runs)
+  FOREMAN_ALREADY_POSTED=$(mm_api GET "/channels/$TOWN_SQUARE_ID/posts?per_page=50" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+posts = data.get('posts', {})
+print('yes' if any(p.get('user_id') == '$FOREMAN_USER_ID' for p in posts.values()) else '')
+" 2>/dev/null || echo "")
 
-Foreman is a multi-model AI agent bridge. Each channel is an independent AI session — its own model, conversation history, and persona. Just send a message and the bot responds.
-
-**Start here:**
-- `#alice`, `#bob`, `#charlie` — General AI chat (Claude Sonnet)
-- `#claude` — Claude Opus (most capable)
-- `#gemini` — Google Gemini
-- `#gpt` — OpenAI GPT
-
-**Control your session with `/f`:**
-
-| Command | What it does |
-|---|---|
-| `/f model sonnet` | Switch to Claude Sonnet |
-| `/f model opus` | Switch to Claude Opus |
-| `/f model gemini:gemini-2.5-flash` | Switch to Gemini |
-| `/f model openai:o4-mini` | Switch to GPT |
-| `/f session` | Show current model + settings |
-| `/f new` | Reset the session |
-| `/f auto-approve on` | Skip tool approval prompts |
-| `/f stop` | Abort a running query |
-| `/f cwd ~/projects/myapp` | Set the working directory |
-| `/f run flows/flowspec-tutorial.flow` | Run the FlowSpec tutorial |
-
-**Run your first multi-bot workflow:**
-```
-/f run flows/flowspec-tutorial.flow "Lesson 1"
-```
-
-**Full setup guide:** See `ONBOARDING.md` in the repo root for prerequisites, advanced configuration, integrations (Jira, Bitrise, Google Workspace), and common gotchas.
-WELCOME
-)
-
-  POST_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/posts" \
-    -H "Authorization: Bearer $FOREMAN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"channel_id\":\"$TOWN_SQUARE_ID\",\"message\":$(echo "$WELCOME_POST" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")}" 2>/dev/null || echo "")
-
-  POST_ID=$(echo "$POST_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
-
-  if [ -n "$POST_ID" ]; then
-    # Pin the welcome message
-    curl -sf -X POST "$MM_URL/api/v4/posts/$POST_ID/pin" \
-      -H "Authorization: Bearer $ADMIN_TOKEN" > /dev/null 2>&1 || true
-    log "  Welcome message posted and pinned in #town-square"
+  if [ -z "$FOREMAN_ALREADY_POSTED" ]; then
+    POINTER_MSG="👋 **Welcome to Foreman!** Head to ~foreman-onboarding for the full setup guide, quick-start commands, and everything you need to get up and running."
+    curl -sf -X POST "$MM_URL/api/v4/posts" \
+      -H "Authorization: Bearer $FOREMAN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"channel_id\":\"$TOWN_SQUARE_ID\",\"message\":$(printf '%s' "$POINTER_MSG" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")}" > /dev/null 2>&1 || true
+    log "  Pointer posted to #town-square"
   else
-    warn "  Could not post welcome message (non-fatal)"
+    log "  #town-square already has a Foreman post — skipping"
   fi
 else
-  warn "  #town-square not found — skipping welcome message"
+  warn "  #town-square not found — skipping pointer"
+fi
+
+# ── Post ONBOARDING.md to #foreman-onboarding ────────────────────────────────
+
+echo ""
+log "Posting ONBOARDING.md to #foreman-onboarding..."
+
+ONBOARDING_CHANNEL_ID="${CHANNEL_IDS[foreman-onboarding]:-}"
+ONBOARDING_FILE="$REPO_ROOT/ONBOARDING.md"
+
+if [ -n "$ONBOARDING_CHANNEL_ID" ] && [ -f "$ONBOARDING_FILE" ]; then
+  # Only post if Foreman hasn't already posted here (idempotent on re-runs)
+  ONBOARDING_ALREADY_POSTED=$(mm_api GET "/channels/$ONBOARDING_CHANNEL_ID/posts?per_page=10" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+posts = data.get('posts', {})
+print('yes' if any(p.get('user_id') == '$FOREMAN_USER_ID' for p in posts.values()) else '')
+" 2>/dev/null || echo "")
+
+  if [ -n "$ONBOARDING_ALREADY_POSTED" ]; then
+    log "  #foreman-onboarding already has a Foreman post — skipping"
+  else
+    ONBOARDING_TMP=$(mktemp)
+    python3 -c "
+import json
+with open('$ONBOARDING_FILE') as f:
+    content = f.read()
+with open('$ONBOARDING_TMP', 'w') as f:
+    json.dump({'channel_id': '$ONBOARDING_CHANNEL_ID', 'message': content}, f)
+"
+    ONBOARDING_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/posts" \
+      -H "Authorization: Bearer $FOREMAN_TOKEN" \
+      -H "Content-Type: application/json" \
+      --data-binary "@$ONBOARDING_TMP" 2>/dev/null || echo "")
+    rm -f "$ONBOARDING_TMP"
+
+    ONBOARDING_POST_ID=$(printf '%s' "$ONBOARDING_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+    if [ -n "$ONBOARDING_POST_ID" ]; then
+      curl -sf -X POST "$MM_URL/api/v4/posts/$ONBOARDING_POST_ID/pin" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" > /dev/null 2>&1 || true
+      log "  ONBOARDING.md posted and pinned in #foreman-onboarding"
+    else
+      warn "  Could not post ONBOARDING.md (non-fatal)"
+    fi
+  fi
+else
+  warn "  Skipping onboarding post — channel or file not found"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -661,12 +679,11 @@ echo "  API keys:"
 [ -n "$OPENAI_KEY" ]    && echo -e "    OpenAI:    ${GREEN}configured${NC}" || echo -e "    OpenAI:    ${YELLOW}not set (optional)${NC}"
 echo ""
 echo "  Next steps:"
-echo "    1. temporal server start-dev  (in a separate terminal)"
-echo "    2. npm start"
-echo "    3. Open $MM_URL"
-echo "    4. Login as $ADMIN_USERNAME"
-echo "    5. Check #town-square for the pinned welcome message"
-echo "    6. Message any channel — #alice, #claude, #gemini, #gpt, etc."
+echo "    1. npm start"
+echo "    2. Open $MM_URL"
+echo "    3. Login as $ADMIN_USERNAME"
+echo "    4. Check #foreman-onboarding for the pinned setup guide"
+echo "    5. Message any channel — #alice, #claude, #gemini, #gpt, etc."
 echo ""
 echo -e "  ${BLUE}New to Foreman? Read ONBOARDING.md for the full guide.${NC}"
 echo ""

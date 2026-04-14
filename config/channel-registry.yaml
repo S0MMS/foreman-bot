@@ -37,6 +37,7 @@ mattermost:
   claude: 9nbzg1wo8bb6iqb1d6quri15ih
   gemini: i6sssh8yefrf9nd8m1bqozbcso
   gpt: 375pnzqokbnudqbjtxd59ump7o
+  foreman-onboarding: kwmfbq5mpjgq7kjrbuo4owbixc
   thought-pad: pct6u54cntrf7jwbefsk6ra8sw
   alice: ak1wt1n9zfb93nqksthdmbggpc
   bob: dkjko57j4ifefk1o4orjpcur4h
