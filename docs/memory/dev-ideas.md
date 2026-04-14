@@ -1,5 +1,26 @@
 # Development Ideas
 
+## 28. foreman-google — Proper Domain Toolbelt for Google Workspace
+- **Status**: Idea (Phase 2)
+- **Concept**: Move Google Workspace from its current position as an external subprocess MCP (added in `AnthropicAdapter.buildMcpServers`) into a proper `foreman-google` domain file (`mcp-google.ts`) inside `foreman-toolbelt`. Rather than reimplementing all Google APIs in TypeScript, `mcp-google.ts` would proxy the workspace-mcp subprocess internally and expose its tools through the standard toolbelt pipeline.
+- **Why it matters**:
+  - Today: every Claude bot gets Google Workspace regardless of need (`mcp_servers` scoping doesn't apply)
+  - Today: GPT and Gemini bots get nothing (external MCP only works with AnthropicAdapter)
+  - After: Google tools are scoped per-bot via `mcp_servers: [foreman-google]` in `bots.yaml`
+  - After: consistent `foreman-*` naming, all providers benefit once OpenAIAdapter parity lands
+- **Dependency**: Pairs naturally with #27 (foreman-compute / OpenAIAdapter parity refactor)
+- **Implementation note**: The existing `workspace-mcp` Python package handles all OAuth and Google API complexity — `mcp-google.ts` just needs to proxy its tool calls rather than reimplementing them.
+
+---
+
+## 27. foreman-compute + OpenAI/Gemini Adapter Parity
+- **Status**: Idea (Phase 2)
+- **Concept**: Extract the hardcoded tools in `OpenAIAdapter.ts` (RunBash, ReadFile, WriteFile, EditFile) into a proper `foreman-compute` domain file (`mcp-compute.ts`), then refactor `OpenAIAdapter` and `GeminiAdapter` to pull their tools from `foreman-toolbelt` (honoring `mcp_servers` from `bots.yaml`). Once done, all three providers have equal access to the full toolbelt.
+- **Why it matters**: GPT and Gemini bots currently can't use Jira, Canvas, GitHub, Bitrise, or Google Workspace. This refactor gives them the same capabilities as Claude bots. Also makes `foreman-compute` declarative — bots that need RunBash just add it to `mcp_servers`.
+- **Unlocks**: foreman-google (#28) automatically works for all providers after this lands.
+
+---
+
 ## 26. Workflow Channel — Conversational Multi-Model Council
 - **Status**: Idea
 - **Concept**: A new type of Foreman channel where every message you type automatically triggers a named FlowSpec workflow behind the scenes, and the final synthesized output is posted back conversationally — as if you were talking to a single bot. From the user's perspective, it feels identical to chatting with the Slack or Mattermost Architect. The multi-model orchestration is completely invisible.
