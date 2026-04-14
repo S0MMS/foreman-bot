@@ -12,10 +12,11 @@ type: project
 
 ---
 
-## Current Health: 🔄 REBOOTING — single-token Mattermost refactor
+## Current Health: ✅ HEALTHY (2026-04-13)
 
-**Last known good commit:** `784fda0`
-**Rollback:** `git checkout 784fda0 -- src/mattermost.ts && npm run build && launchctl unload ~/Library/LaunchAgents/com.foreman.bot.plist && launchctl load ~/Library/LaunchAgents/com.foreman.bot.plist`
+**Last known good commit:** `02015b7`
+**defaultCwd:** `/Users/chris.shreve/claude-slack-bridge` — all new sessions auto-load CLAUDE.md from repo root.
+**Rollback config (if needed):** remove `"defaultCwd"` line from `~/.foreman/config.json`, then reboot.
 
 ---
 

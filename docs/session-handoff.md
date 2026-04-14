@@ -1,45 +1,34 @@
-# Session Handoff — 2026-04-13
+# Session Handoff — 2026-04-13 (Pre-reboot #2)
 
-## What was done this session
+## What we were doing
 
-Completed the foreman-toolbelt modularization refactor. The monolithic `mcp-canvas.ts`
-(~1092 lines, all tools inline) has been split into 6 domain-specific files plus a thin
-orchestrator.
+Configuring the durable Mattermost Architect DM. Discovered that all sessions default to
+`/Users/chris.shreve` as cwd (from `process.cwd()`), which means CLAUDE.md doesn't auto-load.
+Added `"defaultCwd": "/Users/chris.shreve/claude-slack-bridge"` to `~/.foreman/config.json`
+to fix this for all sessions going forward, including any DM with the Foreman bot.
 
-### New domain files created
-| File | Server name | Tools |
-|------|-------------|-------|
-| `src/mcp-slack.ts` | `foreman-slack` | 13 tools: CanvasList, CanvasRead, CanvasFindSection, CanvasCreate, CanvasAppend, CanvasDelete, CanvasReadById, CanvasUpdateElementById, CanvasDeleteElementById, PostMessage, GetCurrentChannel, ReadChannel, DiagramCreate |
-| `src/mcp-atlassian.ts` | `foreman-atlassian` | 13 Jira tools + 4 Confluence tools |
-| `src/mcp-github.ts` | `foreman-github` | GitHubCreatePR, GitHubReadPR, GitHubReadIssue, GitHubSearch, GitHubListPRs |
-| `src/mcp-bitrise.ts` | `foreman-bitrise` | TriggerBitrise |
-| `src/mcp-admin.ts` | `foreman-admin` | SelfReboot |
-| `src/mcp-xcode.ts` | `foreman-xcode` | LaunchApp |
+## What was changed
 
-### Updated files
-- `src/mcp-canvas.ts` — now a thin orchestrator (~55 lines); imports from all domain files
-- `src/bots.ts` — added `mcp_servers?: string[]` to `SdkBot` interface
-- `src/mattermost.ts` — BotConfig gets `mcpServers`, passed to `createCanvasMcpServer`
+`~/.foreman/config.json` only — no source code changes, no build needed.
 
-### Backward compatibility
-- `createCanvasMcpServer()` signature unchanged — all callers work without modification
-- Default behavior (no `enabledServers`) loads ALL tools — same as before
-- Per-bot tool scoping: add `mcp_servers: [foreman-slack, foreman-atlassian]` to a bot in `bots.yaml`
+## Context on the Mattermost Architect
 
-### Build status
-- `npm run build` → clean, zero errors
-- Smoke test: server starts, `/health` returns `{"status":"ok"}`
+The durable Mattermost Architect is:
+- A DM between Chris and the **Foreman bot** account in Mattermost
+- NOT registered in `channel-registry.yaml` or `bots.yaml` (immune to config corruption)
+- `isDM = true` → SelfReboot works
+- After this reboot, new sessions in that DM will start with cwd = repo root → CLAUDE.md auto-loaded
+
+Chris still needs to:
+1. Open a DM with the Foreman bot in Mattermost (if not already done)
+2. Send any message — the session will start fresh with the correct cwd
 
 ## After reboot — verify
-1. Check Mattermost bot responds in a channel
-2. Confirm canvas tools work (CanvasRead / CanvasAppend)
-3. Confirm Jira tools work (JiraSearch)
-4. Update `docs/memory/project_foreman_2.md` health status → ✅ STABLE
 
-## Rollback (if reboot fails)
-```bash
-cd ~/claude-slack-bridge
-git checkout 2c6cf44 -- src/mcp-canvas.ts src/bots.ts src/mattermost.ts
-rm -f src/mcp-slack.ts src/mcp-atlassian.ts src/mcp-github.ts src/mcp-bitrise.ts src/mcp-admin.ts src/mcp-xcode.ts
-npm run build
-```
+1. Send a message in the Mattermost DM with Foreman bot
+2. Send `/f session` — confirm `Working dir: /Users/chris.shreve/claude-slack-bridge`
+3. Confirm Slack and Mattermost channels still respond normally
+
+## Open questions / next steps
+
+None — this is a clean config-only change.
