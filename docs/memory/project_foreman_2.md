@@ -12,11 +12,10 @@ type: project
 
 ---
 
-## Current Health: ✅ HEALTHY (2026-04-13)
+## Current Health: ✅ HEALTHY (2026-04-14)
 
-**Last known good commit:** `02015b7`
-**defaultCwd:** `/Users/chris.shreve/claude-slack-bridge` — all new sessions auto-load CLAUDE.md from repo root.
-**Rollback config (if needed):** remove `"defaultCwd"` line from `~/.foreman/config.json`, then reboot.
+**Last known good commit:** `071862c` (Unify slash command to /f across Slack and Mattermost)
+**What changed:** All `/cc` → `/f` — Slack and Mattermost now use the same command. Reboot confirmed healthy.
 
 ---
 
