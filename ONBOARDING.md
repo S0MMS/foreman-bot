@@ -135,8 +135,6 @@ Use `/f` in any channel to control the bot:
 | `/f run flows/my-workflow.flow` | Run a FlowSpec workflow |
 | `/f reboot` | Restart the Foreman process |
 
-> **Slack users:** Use `/cc` instead of `/f`. Everything else is the same.
-
 ---
 
 ## Tool Approvals

@@ -11,7 +11,7 @@
     },
     "slash_commands": [
       {
-        "command": "/cc",
+        "command": "/f",
         "description": "Control your Foreman session",
         "usage_hint": "[cwd|model|name|plugin|stop|session|canvas|new|reboot] [args]",
         "should_escape": false

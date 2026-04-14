@@ -39,7 +39,7 @@ Foreman is a multi-transport AI agent bridge that connects chat platforms (Slack
 ```
 src/
   index.ts            — Entry point: starts Slack/Mattermost, loads sessions, bots, Kafka, Temporal
-  slack.ts            — Slack event handlers: messages, /cc commands, approve/deny buttons
+  slack.ts            — Slack event handlers: messages, /f commands, approve/deny buttons
   mattermost.ts       — Mattermost WebSocket bridge: messages, /f commands, tool approval
   claude.ts           — Claude Agent SDK integration: startSession, resumeSession, abortCurrentQuery
   session.ts          — Per-channel state management with disk persistence (~/.foreman/sessions.json)
@@ -126,7 +126,7 @@ Foreman supports three AI backends, each implementing the `AgentAdapter` interfa
 | `openai` | OpenAI chat completions | `adapters/OpenAIAdapter.ts` |
 | `gemini` | Google Gemini | `adapters/GeminiAdapter.ts` |
 
-Switch vendor and model together: `/cc model openai:gpt-4o` or `/cc model gemini:gemini-2.0-flash`.
+Switch vendor and model together: `/f model openai:gpt-4o` or `/f model gemini:gemini-2.0-flash`.
 
 OpenAI and Gemini adapters implement their own agentic tool-use loops. `GeminiAdapter` imports `executeTool` and `TOOLS` from `OpenAIAdapter` to share tool definitions.
 
@@ -143,50 +143,50 @@ OpenAI and Gemini adapters implement their own agentic tool-use loops. `GeminiAd
 - **DM channels** (ID starts with `D`): always named "Foreman"
 - **Other channels**: assigned a random pirate name on first message (e.g. "Bilge-soaked Cutlass", "Dread Kraken")
 - Name is injected into the system prompt: *"Your name in this channel is {name}."*
-- Override with `/cc name <name>`
+- Override with `/f name <name>`
 
-## The /cc Command System
+## The /f Command System
 
-All control commands use the Slack slash command `/cc`. Parsed in `slack.ts`.
+All control commands use the Slack slash command `/f`. Parsed in `slack.ts`.
 
 | Command | Description |
 |---|---|
-| `/cc cwd <path>` | Set working directory. Supports absolute paths and `~/...`. |
-| `/cc model <name>` | Set model. Accepts aliases (`opus`, `sonnet`, `haiku`) or full ID. Use `vendor:model` to switch adapter (e.g. `openai:gpt-4o`, `gemini:gemini-2.0-flash`). |
-| `/cc name <name>` | Override persona name for this channel. |
-| `/cc plugin <path>` | Load a plugin directory. Absolute or relative to current cwd. |
-| `/cc plugin` | List loaded plugins. |
-| `/cc stop` | Abort the currently running query. |
-| `/cc auto-approve on\|off` | Skip all tool approval prompts for this channel. |
-| `/cc session` | Show current session info (vendor, model, cwd, plugins, running state). |
-| `/cc new` | Clear session: resets sessionId, model, and plugins. Name and cwd are preserved. |
-| `/cc message #ch1 #ch2 [text]` | Fan out a message to one or more channels. Each channel's bot processes it independently via `processChannelMessage`. |
-| `/cc quorum #w1 #w2 <question>` | Fan out question to worker channels; poll for their bot replies; inject responses inline and dispatch the judge (this channel's bot) to synthesize. No tool calls needed. |
-| `/cc canvas read` | Load canvas, summarize it, start clarifying Q&A. |
-| `/cc canvas write` | Generate and save acceptance criteria to the canvas. |
-| `/cc spec` | Process canvas: ask 3 questions, then write Tech Spec + Gherkin AC to canvas. |
-| `/cc implement [platform]` | Read canvas, explore codebase, write code. Auto-detects iOS/Android/Web from cwd. |
-| `/cc commit <message>` | Stage all changes (`git add -A`) and commit. Posts short SHA on success. |
-| `/cc push` | Push the current branch to origin. |
-| `/cc build [scheme] [sim]` | Build the Xcode project in cwd and install/run on a simulator. |
-| `/cc launch-ios [scheme] [sim]` | Install + launch last built iOS app on simulator (skips xcodebuild). |
-| `/cc launch-android [variant]` | `gradlew install` + `adb am start` on running emulator (default: BetaDebug). |
-| `/cc bitrise <workflow>` | Trigger a Bitrise CI workflow on the current git branch. |
-| `/cc cleanup` | Remove stale channel sessions from disk. |
-| `/cc workflow hello <name>` | Run the hello Temporal workflow — proves Temporal integration is working. |
-| `/cc delphi [--design\|--research\|--code] [--deep] #w1 #w2 #w3 "question"` | Run a 3-phase Delphi multi-bot verification workflow via Temporal. Workers answer → judge synthesizes → workers critique → judge gives final answer. |
-| `/cc run <file.flow> [workflow_name]` | Run a FlowSpec workflow from a `.flow` file. |
-| `/cc run canvas [workflow_name]` | Run a FlowSpec workflow from the channel's default canvas. |
-| `/cc run "Canvas Title" [workflow_name]` | Run a FlowSpec workflow from a named canvas (case-insensitive title match). |
-| `/cc canvas list [channel]` | List all canvases in the current (or specified) channel with their IDs. |
-| `/cc reboot` | Exit process (launchd restarts Foreman). |
+| `/f cwd <path>` | Set working directory. Supports absolute paths and `~/...`. |
+| `/f model <name>` | Set model. Accepts aliases (`opus`, `sonnet`, `haiku`) or full ID. Use `vendor:model` to switch adapter (e.g. `openai:gpt-4o`, `gemini:gemini-2.0-flash`). |
+| `/f name <name>` | Override persona name for this channel. |
+| `/f plugin <path>` | Load a plugin directory. Absolute or relative to current cwd. |
+| `/f plugin` | List loaded plugins. |
+| `/f stop` | Abort the currently running query. |
+| `/f auto-approve on\|off` | Skip all tool approval prompts for this channel. |
+| `/f session` | Show current session info (vendor, model, cwd, plugins, running state). |
+| `/f new` | Clear session: resets sessionId, model, and plugins. Name and cwd are preserved. |
+| `/f message #ch1 #ch2 [text]` | Fan out a message to one or more channels. Each channel's bot processes it independently via `processChannelMessage`. |
+| `/f quorum #w1 #w2 <question>` | Fan out question to worker channels; poll for their bot replies; inject responses inline and dispatch the judge (this channel's bot) to synthesize. No tool calls needed. |
+| `/f canvas read` | Load canvas, summarize it, start clarifying Q&A. |
+| `/f canvas write` | Generate and save acceptance criteria to the canvas. |
+| `/f spec` | Process canvas: ask 3 questions, then write Tech Spec + Gherkin AC to canvas. |
+| `/f implement [platform]` | Read canvas, explore codebase, write code. Auto-detects iOS/Android/Web from cwd. |
+| `/f commit <message>` | Stage all changes (`git add -A`) and commit. Posts short SHA on success. |
+| `/f push` | Push the current branch to origin. |
+| `/f build [scheme] [sim]` | Build the Xcode project in cwd and install/run on a simulator. |
+| `/f launch-ios [scheme] [sim]` | Install + launch last built iOS app on simulator (skips xcodebuild). |
+| `/f launch-android [variant]` | `gradlew install` + `adb am start` on running emulator (default: BetaDebug). |
+| `/f bitrise <workflow>` | Trigger a Bitrise CI workflow on the current git branch. |
+| `/f cleanup` | Remove stale channel sessions from disk. |
+| `/f workflow hello <name>` | Run the hello Temporal workflow — proves Temporal integration is working. |
+| `/f delphi [--design\|--research\|--code] [--deep] #w1 #w2 #w3 "question"` | Run a 3-phase Delphi multi-bot verification workflow via Temporal. Workers answer → judge synthesizes → workers critique → judge gives final answer. |
+| `/f run <file.flow> [workflow_name]` | Run a FlowSpec workflow from a `.flow` file. |
+| `/f run canvas [workflow_name]` | Run a FlowSpec workflow from the channel's default canvas. |
+| `/f run "Canvas Title" [workflow_name]` | Run a FlowSpec workflow from a named canvas (case-insensitive title match). |
+| `/f canvas list [channel]` | List all canvases in the current (or specified) channel with their IDs. |
+| `/f reboot` | Exit process (launchd restarts Foreman). |
 
 ### Escape hatch for Claude slash commands
 Messages starting with `!` are rewritten: `!freud:pull main` → `/freud:pull main`. This lets users send Claude's own slash commands without Slack intercepting them.
 
 ## Quorum Mode
 
-`/cc quorum` implements an LLM-as-judge pattern:
+`/f quorum` implements an LLM-as-judge pattern:
 
 1. Invoked from the **judge channel** (e.g. `#claude-01`)
 2. Workers listed in the command each receive: *"Answer this question and post your answer to #[judge channel]: {question}"*
@@ -248,15 +248,15 @@ Tools are split into two categories:
 
 **Requires approval**: `Write`, `Edit` — triggers an Approve/Deny button message in Slack/Mattermost. The session is paused awaiting the user's button tap.
 
-When `autoApprove` is enabled for a channel (`/cc auto-approve on`), all tools run without prompts.
+When `autoApprove` is enabled for a channel (`/f auto-approve on`), all tools run without prompts.
 
 ## Plugin System
 
-Plugins are directories containing Claude Code plugin files (e.g. CLAUDE.md, commands). Loaded via `/cc plugin <path>`.
+Plugins are directories containing Claude Code plugin files (e.g. CLAUDE.md, commands). Loaded via `/f plugin <path>`.
 
 - Stored as absolute paths in `SessionState.plugins`
 - Passed to the Agent SDK as `plugins: [{ type: "local", path }]`
-- `/cc new` clears plugins
+- `/f new` clears plugins
 - Use the `!` escape to invoke plugin commands: `!freud:pull cks/branch`
 
 ## Configuration
@@ -309,7 +309,7 @@ When a user says "hello", "hi", introduces themselves, or starts a new conversat
 
 1. What you are (a Slack bridge to AI agents — Claude, OpenAI, Gemini)
 2. How channels work (each gets its own independent session)
-3. The `/cc` command system — list all commands with a one-line description each
+3. The `/f` command system — list all commands with a one-line description each
 4. The `!` escape hatch for Claude slash commands
 5. Plugin system — what it is and how to load one
 6. Tool approval — which tools are auto-approved vs. require a button tap
@@ -319,7 +319,7 @@ Keep the response well-structured with headers. Do not read any files to generat
 
 ## iOS Build Integration
 
-### `/cc build [scheme] [simulator]`
+### `/f build [scheme] [simulator]`
 
 Runs `xcodebuild` against the `.xcworkspace` found in the current cwd, targeting a booted iOS simulator.
 
@@ -330,7 +330,7 @@ Runs `xcodebuild` against the `.xcworkspace` found in the current cwd, targeting
 4. Posts `:hammer: Building...` immediately, runs `xcodebuild -configuration Debug build`
 5. Posts `BUILD SUCCEEDED ✅` or `BUILD FAILED ❌` with up to 5 error lines
 
-### `/cc bitrise <workflow>`
+### `/f bitrise <workflow>`
 
 Triggers a Bitrise CI build for the current git branch via the Bitrise REST API. Requires `bitriseToken` and `bitriseAppSlug` in `~/.foreman/config.json`.
 
@@ -528,9 +528,9 @@ Before modifying your own source code and rebooting, you MUST follow all 7 steps
 
 ## Known Gotchas
 
-- **Relative paths in `/cc cwd`**: Resolve against `homedir()`. Tilde expansion (`~/projects`) supported.
-- **`/cc new` clears plugins**: Reloading plugins is required after a session reset.
+- **Relative paths in `/f cwd`**: Resolve against `homedir()`. Tilde expansion (`~/projects`) supported.
+- **`/f new` clears plugins**: Reloading plugins is required after a session reset.
 - **Stale sessions**: Resume failures are automatically recovered with a fresh `startSession()`.
 - **Bot message filtering**: `app.message` filters out messages with `bot_id`. Worker posts to the judge channel in quorum mode won't trigger the judge bot — this is intentional.
-- **Reboot via launchd**: `/cc reboot` calls `process.exit(0)`. Requires launchd plist or wrapper to restart automatically.
+- **Reboot via launchd**: `/f reboot` calls `process.exit(0)`. Requires launchd plist or wrapper to restart automatically.
 - **OpenAI/Gemini tool approval**: These adapters share the same `executeTool` and `APPROVAL_REQUIRED` set from `OpenAIAdapter.ts`.

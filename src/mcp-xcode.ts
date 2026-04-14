@@ -67,7 +67,7 @@ export function createXcodeTools(ctx: XcodeMcpContext) {
                 }
               } catch { /* skip */ }
             }
-            if (!appPath) return { content: [{ type: "text" as const, text: ":x: No built app found. Run `/cc build` first." }] };
+            if (!appPath) return { content: [{ type: "text" as const, text: ":x: No built app found. Run `/f build` first." }] };
 
             execSync(`xcrun simctl install "${booted.udid}" "${appPath}"`, { encoding: "utf8" });
             const bundleId = execSync(

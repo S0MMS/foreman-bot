@@ -182,12 +182,12 @@ export function registerUiRoutes(app: Application): void {
     res.json({ ok: true });
   });
 
-  // /cc session control commands for the UI Architect
+  // /f session control commands for the UI Architect
   app.post('/api/command', (req, res) => {
     const { command } = req.body as { command: string };
     if (!command) { res.status(400).json({ error: 'command required' }); return; }
 
-    const parts = command.replace(/^\/cc\s+/, '').trim().split(/\s+/);
+    const parts = command.replace(/^\/f\s+/, '').trim().split(/\s+/);
     const cmd = parts[0]?.toLowerCase();
     const arg = parts.slice(1).join(' ');
 
@@ -240,7 +240,7 @@ export function registerUiRoutes(app: Application): void {
       return;
     }
 
-    res.json({ response: `Unknown command: /cc ${cmd}\n\nAvailable: session, model, name, auto-approve, new, stop` });
+    res.json({ response: `Unknown command: /f ${cmd}\n\nAvailable: session, model, name, auto-approve, new, stop` });
   });
 
   // ── Workspace API ───────────────────────────────────────────────────────────
