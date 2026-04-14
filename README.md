@@ -131,6 +131,26 @@ Restart Foreman after adding keys. Channels that showed "API key not configured"
 
 Foreman can also connect to Slack in parallel with Mattermost. Add `slackBotToken` and `slackAppToken` to `~/.foreman/config.json`. See `slack-manifest.json` for the Slack app manifest. Use `/cc` instead of `/f` for slash commands in Slack.
 
+## Google Workspace (Optional)
+
+Foreman bots can read and write Google Docs, Sheets, Slides, Drive, Gmail, and Calendar through the [workspace-mcp](https://github.com/Klavis-AI/workspace-mcp) integration.
+
+**Setup:**
+
+1. Install `uv` (Python package manager): `brew install uv`
+2. Create a Google Cloud OAuth app with the required scopes (see [workspace-mcp docs](https://github.com/Klavis-AI/workspace-mcp))
+3. Download your `client_secret.json` and run: `uvx workspace-mcp --single-user` to complete OAuth
+4. Add your credentials to `~/.foreman/config.json`:
+
+```json
+{
+  "googleOAuthClientId": "your-client-id.apps.googleusercontent.com",
+  "googleOAuthClientSecret": "GOCSPX-..."
+}
+```
+
+Restart Foreman. Claude bots will automatically have access to all Google Workspace tools. OpenAI and Gemini bots do not yet support Google Workspace tools (Phase 2 roadmap).
+
 ## Running as a Service
 
 On macOS, you can use launchd to keep Foreman running:
@@ -152,10 +172,11 @@ src/                  TypeScript source
   index.ts            Entry point — starts all transports
   mattermost.ts       Mattermost WebSocket bridge
   slack.ts            Slack Socket Mode bridge (optional)
+  mcp-toolbelt.ts     In-process MCP server exposing all bot tools
   adapters/           Claude, Gemini, OpenAI agent adapters
   temporal/           Workflow engine (workflows, activities, worker)
   flowspec/           FlowSpec parser and compiler
-bots.yaml             Bot definitions — models, prompts, providers
+bots.yaml             Bot definitions — models, prompts, providers, tool scoping
 config/
   channel-registry.yaml   Channel ID mappings per transport
 flows/                FlowSpec workflow files (.flow)
@@ -163,6 +184,27 @@ scripts/
   bootstrap.sh        Zero-browser Mattermost setup
 docker-compose.yml    Redpanda + Mattermost + Temporal + Postgres
 ```
+
+### Customizing Bot Tools
+
+By default every bot has access to all tools (Canvas, Jira, Confluence, GitHub, Bitrise, Xcode, etc.). You can restrict a bot to a specific set of tool domains via `mcp_servers` in `bots.yaml`:
+
+```yaml
+bots:
+  alice:
+    type: sdk
+    provider: anthropic
+    model: claude-sonnet-4-6
+    mcp_servers:
+      - foreman-slack       # Canvas + PostMessage + ReadChannel
+      - foreman-atlassian   # Jira + Confluence
+      - foreman-github      # GitHub PRs + issues
+      - foreman-bitrise     # CI/CD triggers
+      - foreman-admin       # Session control tools
+      - foreman-xcode       # iOS simulator / Android emulator
+```
+
+Omitting `mcp_servers` (the default) gives the bot all tools.
 
 ## Configuration
 
@@ -174,10 +216,20 @@ All config lives in `~/.foreman/config.json`, written automatically by `npm run 
 | `geminiApiKey` | Google Gemini API key (optional) |
 | `openaiApiKey` | OpenAI API key (optional) |
 | `mattermostUrl` | Mattermost server URL (default: `http://localhost:8065`) |
-| `mattermostAdminToken` | Admin access token for Mattermost API |
+| `mattermostAdminToken` | Admin personal access token for Mattermost setup API |
+| `mattermostBotTokens` | Per-bot tokens: `{ "alice": "token", "bob": "token" }` (created by setup) |
+| `mattermostActionUrl` | Callback URL for Approve/Deny buttons (default: `http://host.docker.internal:3001`) |
 | `defaultCwd` | Default working directory for bot sessions |
 | `slackBotToken` | Slack bot token (optional, for Slack bridge) |
 | `slackAppToken` | Slack app token (optional, for Slack bridge) |
+| `jiraHost` | Jira base URL, e.g. `https://myorg.atlassian.net` (optional) |
+| `jiraEmail` | Jira account email (optional) |
+| `jiraApiToken` | Jira API token from Atlassian account settings (optional) |
+| `jiraProjectKey` | Default Jira project key, e.g. `ENG` (optional) |
+| `bitriseToken` | Bitrise personal access token (optional) |
+| `bitriseAppSlug` | Bitrise app slug from your app's URL (optional) |
+| `googleOAuthClientId` | Google OAuth client ID for Workspace MCP integration (optional) |
+| `googleOAuthClientSecret` | Google OAuth client secret for Workspace MCP integration (optional) |
 
 ## License
 

@@ -57,7 +57,7 @@ src/
   config.ts       — Loads ~/.foreman/config.json
   format.ts       — Markdown↔Slack formatting, message chunking, progress display
   init.ts         — Interactive setup wizard (foreman init)
-  mcp-canvas.ts   — In-process MCP server exposing Foreman's own tools
+  mcp-toolbelt.ts — In-process MCP server exposing Foreman's own tools (6 domains)
   canvas.ts       — Slack canvas CRUD helpers
   jira.ts         — Jira REST API helpers
   confluence.ts   — Confluence REST API helpers
@@ -155,7 +155,7 @@ Requires `openaiApiKey` in `~/.foreman/config.json` for OpenAI.
 
 ## Internal MCP Server (foreman-toolbelt)
 
-Foreman runs an **in-process MCP server** (`mcp-canvas.ts`) that exposes its own tools to Claude. This is created fresh per query via `createSdkMcpServer()` from the Claude Agent SDK and passed as `mcpServers["foreman-toolbelt"]`.
+Foreman runs an **in-process MCP server** (`mcp-toolbelt.ts`) that exposes its own tools to Claude. This is created fresh per query via `createSdkMcpServer()` from the Claude Agent SDK and passed as `mcpServers["foreman-toolbelt"]`.
 
 ### Canvas Tools
 
