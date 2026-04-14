@@ -572,6 +572,70 @@ create_category "General" \
   "${CHANNEL_IDS[bob]}" \
   "${CHANNEL_IDS[charlie]}"
 
+# ── Post welcome message to town-square ─────────────────────────────────────
+
+echo ""
+log "Posting welcome message to #town-square..."
+
+TOWN_SQUARE_ID=$(mm_api GET "/teams/$TEAM_ID/channels/name/town-square" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+if [ -n "$TOWN_SQUARE_ID" ]; then
+  add_to_channel "$TOWN_SQUARE_ID" "$FOREMAN_USER_ID"
+
+  WELCOME_POST=$(cat << 'WELCOME'
+## Welcome to Foreman!
+
+Foreman is a multi-model AI agent bridge. Each channel is an independent AI session — its own model, conversation history, and persona. Just send a message and the bot responds.
+
+**Start here:**
+- `#alice`, `#bob`, `#charlie` — General AI chat (Claude Sonnet)
+- `#claude` — Claude Opus (most capable)
+- `#gemini` — Google Gemini
+- `#gpt` — OpenAI GPT
+
+**Control your session with `/f`:**
+
+| Command | What it does |
+|---|---|
+| `/f model sonnet` | Switch to Claude Sonnet |
+| `/f model opus` | Switch to Claude Opus |
+| `/f model gemini:gemini-2.5-flash` | Switch to Gemini |
+| `/f model openai:o4-mini` | Switch to GPT |
+| `/f session` | Show current model + settings |
+| `/f new` | Reset the session |
+| `/f auto-approve on` | Skip tool approval prompts |
+| `/f stop` | Abort a running query |
+| `/f cwd ~/projects/myapp` | Set the working directory |
+| `/f run flows/flowspec-tutorial.flow` | Run the FlowSpec tutorial |
+
+**Run your first multi-bot workflow:**
+```
+/f run flows/flowspec-tutorial.flow "Lesson 1"
+```
+
+**Full setup guide:** See `ONBOARDING.md` in the repo root for prerequisites, advanced configuration, integrations (Jira, Bitrise, Google Workspace), and common gotchas.
+WELCOME
+)
+
+  POST_RESULT=$(curl -sf -X POST "$MM_URL/api/v4/posts" \
+    -H "Authorization: Bearer $FOREMAN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"channel_id\":\"$TOWN_SQUARE_ID\",\"message\":$(echo "$WELCOME_POST" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")}" 2>/dev/null || echo "")
+
+  POST_ID=$(echo "$POST_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+  if [ -n "$POST_ID" ]; then
+    # Pin the welcome message
+    curl -sf -X POST "$MM_URL/api/v4/posts/$POST_ID/pin" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" > /dev/null 2>&1 || true
+    log "  Welcome message posted and pinned in #town-square"
+  else
+    warn "  Could not post welcome message (non-fatal)"
+  fi
+else
+  warn "  #town-square not found — skipping welcome message"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -597,9 +661,12 @@ echo "  API keys:"
 [ -n "$OPENAI_KEY" ]    && echo -e "    OpenAI:    ${GREEN}configured${NC}" || echo -e "    OpenAI:    ${YELLOW}not set (optional)${NC}"
 echo ""
 echo "  Next steps:"
-echo "    1. npm start"
-echo "    2. Open $MM_URL"
-echo "    3. Login as $ADMIN_USERNAME"
-echo "    4. Message any channel — #claude, #gemini, #gpt, #alice, etc."
-echo "    5. Run the FlowSpec tutorial: /f run flows/flowspec-tutorial.flow"
+echo "    1. temporal server start-dev  (in a separate terminal)"
+echo "    2. npm start"
+echo "    3. Open $MM_URL"
+echo "    4. Login as $ADMIN_USERNAME"
+echo "    5. Check #town-square for the pinned welcome message"
+echo "    6. Message any channel — #alice, #claude, #gemini, #gpt, etc."
+echo ""
+echo -e "  ${BLUE}New to Foreman? Read ONBOARDING.md for the full guide.${NC}"
 echo ""

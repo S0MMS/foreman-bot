@@ -2,6 +2,8 @@
 
 A multi-model AI agent bridge for teams. Chat with Claude, Gemini, and GPT bots from a shared Mattermost instance. Orchestrate multi-bot workflows with FlowSpec.
 
+> **New here?** See **[ONBOARDING.md](ONBOARDING.md)** for a step-by-step setup guide, command reference, and common gotchas.
+
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
