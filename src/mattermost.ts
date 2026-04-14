@@ -878,10 +878,11 @@ function connectWebSocket(): void {
       // Handle /f commands — either from registered slash command or typed as text
       if (text.startsWith("/f ") || text === "/f") {
         const fBotConfig = identifyChannelBot(channel);
+        const fToken = fBotConfig?.token ?? (MM_FOREMAN_TOKEN || MM_ARCHITECT_TOKEN);
         try {
-          await handleCommand(channel, text, requesterId, fBotConfig?.token);
+          await handleCommand(channel, text, requesterId, fToken);
         } catch (err) {
-          await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`, fBotConfig?.token);
+          await postMessage(channel, `Error: ${err instanceof Error ? err.message : String(err)}`, fToken);
         }
         return;
       }
@@ -890,9 +891,10 @@ function connectWebSocket(): void {
       const processedText = text.startsWith("!") ? "/" + text.slice(1) : text;
 
       // Identify which bot (if any) owns this channel — routes persona + token + reactions
+      // For unregistered channels (ad-hoc), fall back to foreman bot token (since foreman is the bot the user invited)
       const botConfig = identifyChannelBot(channel);
-      const reactUserId = botConfig?.userId ?? MM_ARCHITECT_USER_ID;
-      const reactToken = botConfig?.token ?? MM_ARCHITECT_TOKEN;
+      const reactUserId = botConfig?.userId ?? (MM_FOREMAN_USER_ID || MM_ARCHITECT_USER_ID);
+      const reactToken = botConfig?.token ?? (MM_FOREMAN_TOKEN || MM_ARCHITECT_TOKEN);
 
       // Add thinking reaction (signals: "I see your message")
       // Small delay gives the browser time to set up its reaction listener for the new post
